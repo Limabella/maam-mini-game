@@ -67,3 +67,13 @@ npm run build
 firebase init hosting
 firebase deploy
 ```
+
+## Firebase Hosting
+
+```bash
+npm install
+copy .env.example .env.local
+npm run deploy -- --project <firebase-project-id>
+```
+
+`firebase.json` deploys the Vite `dist` folder and rewrites all routes to `index.html`, so direct room URLs such as `/room/ABCD` work after deployment.

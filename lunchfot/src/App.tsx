@@ -1,28 +1,25 @@
-﻿import {
-  FormEvent,
+import {
   useEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
-  type PointerEvent,
-  type WheelEvent,
 } from "react";
+import { Application, Assets, Container, Graphics, Sprite, Text, Texture } from "pixi.js";
 import { menuById, menuCards } from "./data/menuCards";
-import {
-  canThrowAtSpeed,
-  calculateResult,
-  getActiveBoostPower,
-  getCurrentSpinFactor,
-  getSpinIntensity,
-  getThrowImpactVisual,
-  getWheelRotation,
-  ROUND_DURATION_MS,
-  SLICE_DEG,
-  THROW_WINDOW_END_MS,
-  THROW_WINDOW_START_MS,
-} from "./game/roulette";
+import { getMenuDisplayName, getRacerForMenu } from "./data/sushiRacers";
 import { createInitialSoundEnabled, useArcadeAudio, type ArcadeAudio } from "./game/audio";
+import {
+  FINALIST_COUNT,
+  VOTE_LIMIT,
+  calculateRaceResult,
+  formatRaceTime,
+  getActiveRaceEvents,
+  getRaceLaneStates,
+  getVoteTallies,
+  hasRaceWinner,
+  selectFinalists,
+} from "./game/sushiRace";
 import {
   createRoomStore,
   getRememberedNickname,
@@ -30,11 +27,16 @@ import {
   rememberNickname,
   type RoomStore,
 } from "./services/roomStore";
-import type { MenuCard, RoomState, ThrowEntry } from "./types";
+import type { MenuCard, RaceEventType, RoomState, RoomStatus } from "./types";
 
 const getCodeFromPath = () => {
   const [, segment, code] = window.location.pathname.split("/");
   return segment === "room" && code ? code.toUpperCase().slice(0, 4) : "";
+};
+
+const getFallbackNickname = (uid: string) => {
+  const suffix = uid.replace(/[^a-z0-9]/gi, "").slice(-4).toUpperCase() || "FOT";
+  return `FOT-${suffix}`;
 };
 
 const useNow = (active = true) => {
@@ -52,7 +54,7 @@ const useNow = (active = true) => {
     };
 
     frame = window.requestAnimationFrame(tick);
-    const fallback = window.setInterval(() => setNow(Date.now()), 100);
+    const fallback = window.setInterval(() => setNow(Date.now()), 160);
 
     return () => {
       window.cancelAnimationFrame(frame);
@@ -63,54 +65,60 @@ const useNow = (active = true) => {
   return now;
 };
 
+const navigateToHome = (setRoomCode: (code: string) => void) => {
+  window.history.pushState({}, "", "/");
+  setRoomCode("");
+};
+
 const playerCount = (room: RoomState | null) => Object.keys(room?.players ?? {}).length;
 
-const throwCount = (room: RoomState | null) => Object.keys(room?.throws ?? {}).length;
+const getVoteCount = (room: RoomState, uid: string) => room.votes?.[uid]?.menuIds.length ?? 0;
 
-const getGestureBoostPower = (distance: number, duration: number, direction = 1) => {
-  const safeDuration = Math.max(24, duration);
-  const velocity = distance / safeDuration;
-  const distanceBonus = Math.min(distance, 180) / 180;
-  const quickBonus = safeDuration < 180 ? (180 - safeDuration) / 180 : 0;
-  const magnitude = Math.min(11, Math.max(2.6, 2.8 + velocity * 5.8 + distanceBonus * 2.2 + quickBonus * 1.6));
-
-  return direction < 0 ? -magnitude : magnitude;
+const getAssetStem = (menu: MenuCard) => {
+  const match = menu.imageUrl.match(/\/([^/]+)\.png$/);
+  return match?.[1] ?? menu.id.replace("-lm", "");
 };
 
-const formatError = (errorDeg: number) => `${errorDeg.toFixed(2)}°`;
+const getFoodImageUrl = (menu: MenuCard) => `/food/food_${getAssetStem(menu)}.png`;
 
-const MENU_DISPLAY_NAMES: Record<string, string> = {
-  "kmj-lm": "김치찌개",
-  "dnj-lm": "된장찌개",
-  "bbp-lm": "비빔밥",
-  "sdf-lm": "순두부찌개",
-  "jyk-lm": "제육볶음",
-  "dks-lm": "돈까스",
-  "gks-lm": "국수",
-  "nmy-lm": "냉면",
-  "sgs-lm": "삼겹살 구이",
-  "dgb-lm": "닭갈비",
-  "pho-lm": "쌀국수",
-  "mlt-lm": "마라탕",
-  "sdb-lm": "샐러드 보울",
-  "sns-lm": "샌드위치 & 수프",
-  "sro-lm": "초밥·롤",
-  "udn-lm": "우동",
-  "crr-lm": "카레라이스",
-  "hbg-lm": "햄버거 세트",
-  "dnb-lm": "덮밥",
-  "bnt-lm": "도시락",
-};
+const getRunnerImageUrl = (menu: MenuCard) => `/hero/runner_${getAssetStem(menu)}.png`;
 
-const getMenuDisplayName = (menu: MenuCard | undefined) => (menu ? MENU_DISPLAY_NAMES[menu.id] ?? menu.name : "");
+type GamePhaseId = "sushi" | "pending" | "dart";
 
-const buildNutritionRows = (menu: MenuCard) => [
-  { label: "단백질", value: Math.min(95, 38 + menu.stats.taste * 10 + menu.stats.balance * 2) },
-  { label: "탄수화물", value: Math.min(95, 36 + menu.stats.speed * 8 + menu.stats.mood * 3) },
-  { label: "지방", value: Math.min(95, 24 + (6 - menu.stats.budget) * 9 + menu.stats.taste * 4) },
-  { label: "식이섬유", value: Math.min(95, 30 + menu.stats.balance * 11) },
-  { label: "나트륨", value: Math.min(95, 34 + menu.stats.mood * 8 + (6 - menu.stats.budget) * 4) },
+type FlowStepId = "main" | "game-select" | "vote-select" | "playing" | "result";
+
+const GAME_PHASES: Array<{
+  id: GamePhaseId;
+  label: string;
+  enabled: boolean;
+}> = [
+  { id: "sushi", label: "\ud68c\uc804 \ucd08\ubc25 \uac8c\uc784", enabled: true },
+  { id: "pending", label: "\uc900\ube44\uc911", enabled: false },
+  { id: "dart", label: "\ub2e4\ud2b8 \uac8c\uc784", enabled: false },
 ];
+
+const FLOW_STEPS: Record<FlowStepId, string> = {
+  main: "main",
+  "game-select": "\uac8c\uc784\uc120\ud0dd",
+  "vote-select": "\ud22c\ud45c\uc120\ud0dd",
+  playing: "\uac8c\uc784\uc9c4\ud589",
+  result: "\uacb0\uacfc\ud654\uba74",
+};
+
+const ROOM_STATUS_TO_STEP: Record<RoomStatus, FlowStepId> = {
+  lobby: "vote-select",
+  countdown: "playing",
+  playing: "playing",
+  result: "result",
+};
+
+const getRoomStepLabel = (status: RoomStatus) => FLOW_STEPS[ROOM_STATUS_TO_STEP[status]];
+
+const RACE_EVENT_META: Record<RaceEventType, { icon: string; label: string }> = {
+  chopsticks: { icon: "🥢", label: "젓가락 탈락" },
+  "reverse-belt": { icon: "↩", label: "역주행 레일" },
+  "green-tea": { icon: "🍵", label: "녹차 미끄러짐" },
+};
 
 function App() {
   const [store, setStore] = useState<RoomStore | null>(null);
@@ -149,37 +157,43 @@ function App() {
   };
 
   const handleCreateRoom = async () => {
-    if (!store || !nickname.trim()) {
+    if (!store) {
       return;
     }
+
+    const activeNickname = nickname.trim() || getFallbackNickname(store.uid);
 
     try {
       setBusy(true);
       setMessage("");
-      rememberNickname(nickname.trim());
-      const nextRoomCode = await store.createRoom(nickname.trim());
+      setNickname(activeNickname);
+      rememberNickname(activeNickname);
+      const nextRoomCode = await store.createRoom(activeNickname);
       navigateToRoom(nextRoomCode);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "諛??앹꽦???ㅽ뙣?덉뒿?덈떎.");
+      setMessage(error instanceof Error ? error.message : "방 생성에 실패했습니다.");
     } finally {
       setBusy(false);
     }
   };
 
   const handleJoinRoom = async (joinRoomCode: string) => {
-    if (!store || !nickname.trim() || !joinRoomCode.trim()) {
+    if (!store || !joinRoomCode.trim()) {
       return;
     }
+
+    const activeNickname = nickname.trim() || getFallbackNickname(store.uid);
 
     try {
       setBusy(true);
       setMessage("");
       const normalizedCode = joinRoomCode.trim().toUpperCase();
-      rememberNickname(nickname.trim());
-      await store.joinRoom(normalizedCode, nickname.trim());
+      setNickname(activeNickname);
+      rememberNickname(activeNickname);
+      await store.joinRoom(normalizedCode, activeNickname);
       navigateToRoom(normalizedCode);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "?낆옣???ㅽ뙣?덉뒿?덈떎.");
+      setMessage(error instanceof Error ? error.message : "입장에 실패했습니다.");
     } finally {
       setBusy(false);
     }
@@ -197,9 +211,16 @@ function App() {
   }
 
   const currentPlayer = room?.players?.[store.uid] ?? null;
+  const appShellClassName = [
+    "app-shell",
+    !roomCode ? "is-home" : "",
+    room?.status === "playing" ? "is-race-playing" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
-    <main className="app-shell">
+    <main className={appShellClassName}>
       <header className="topbar">
         <button className="brand" type="button" onClick={() => navigateToHome(setRoomCode)}>
           <span className="brand-mark">LF</span>
@@ -222,24 +243,8 @@ function App() {
       </header>
 
       {!roomCode ? (
-        <HomeScreen
-          busy={busy}
-          message={message}
-          nickname={nickname}
-          setNickname={setNickname}
-          onCreateRoom={handleCreateRoom}
-          onJoinRoom={handleJoinRoom}
-        />
-      ) : !room ? (
-        <RoomGate
-          busy={busy}
-          message={message}
-          nickname={nickname}
-          roomCode={roomCode}
-          setNickname={setNickname}
-          onJoinRoom={handleJoinRoom}
-        />
-      ) : !currentPlayer ? (
+        <HomeScreen busy={busy} message={message} onCreateRoom={handleCreateRoom} onJoinRoom={handleJoinRoom} />
+      ) : !room || !currentPlayer ? (
         <RoomGate
           busy={busy}
           message={message}
@@ -266,100 +271,93 @@ function App() {
   );
 }
 
-const navigateToHome = (setRoomCode: (code: string) => void) => {
-  window.history.pushState({}, "", "/");
-  setRoomCode("");
-};
-
 type HomeScreenProps = {
   busy: boolean;
   message: string;
-  nickname: string;
-  setNickname: (nickname: string) => void;
   onCreateRoom: () => Promise<void>;
   onJoinRoom: (roomCode: string) => Promise<void>;
 };
 
-function HomeScreen({ busy, message, nickname, setNickname, onCreateRoom, onJoinRoom }: HomeScreenProps) {
-  const [showGameMenu, setShowGameMenu] = useState(false);
+function HomeScreen({ busy, message, onCreateRoom, onJoinRoom }: HomeScreenProps) {
   const [joinCode, setJoinCode] = useState("");
+  const [homeMode, setHomeMode] = useState<"idle" | "games" | "join">("idle");
+
+  const requestJoin = () => {
+    if (joinCode.length === 4) {
+      void onJoinRoom(joinCode);
+      return;
+    }
+
+    window.setTimeout(() => document.getElementById("roomCode")?.focus(), 20);
+  };
 
   return (
-    <section className="home-grid">
-      <div className={`intro${showGameMenu ? " is-picking-game" : ""}`}>
-        <p className="eyebrow">짧고 빠른 방 생성 게임 허브</p>
-        <h1>게임을 고르고 바로 방을 만드세요.</h1>
-        <p className="intro-copy">
-          Lunch Dart는 가장 짧고 간단한 방 생성 게임입니다. 아래에서 게임을 고르거나, 이미 받은 코드로 바로 방에 입장할 수 있습니다.
-        </p>
-        {showGameMenu && (
-          <div className="game-list game-list--side">
-            <button className="game-tile featured" disabled={busy || !nickname.trim()} type="button" onClick={() => void onCreateRoom()}>
-              <strong>1. Lunch Dart</strong>
-              <span>3분 내 결정 · 가장 짧은 룰렛 + 다트 게임</span>
-            </button>
-            <button className="game-tile" disabled type="button">
-              <strong>2. Menu Relay</strong>
-              <span>추가 예정 · 팀 선택형 미니게임</span>
-            </button>
-            <button className="game-tile" disabled type="button">
-              <strong>3. Budget Battle</strong>
-              <span>추가 예정 · 예산 맞추기 플레이스홀더</span>
-            </button>
-          </div>
-        )}
-      </div>
+    <section className="home-screen">
+      <div className="home-content">
+        <div className="home-title" aria-label="Lunch Fot">
+          <span className="home-mark">
+            <img src="/hero/maam-food-logo.png" alt="MaAM Food" />
+          </span>
+          <strong>Lunch Fot</strong>
+        </div>
 
-      <section className="panel action-panel">
-        <label htmlFor="nickname">닉네임</label>
-        <input
-          id="nickname"
-          maxLength={12}
-          placeholder="예: Le-bela"
-          value={nickname}
-          onChange={(event) => setNickname(event.target.value)}
-        />
-        <div className="home-actions">
-          <button
-            className="primary-button"
-            disabled={busy || !nickname.trim()}
-            type="button"
-            onClick={() => setShowGameMenu((value) => !value)}
-          >
-            게임 생성
+        <div className="home-menu" aria-label="Main menu">
+          <button type="button" disabled={busy} onClick={() => setHomeMode("games")}>
+            {"\uac8c\uc784 \uc0dd\uc131"}
           </button>
-          <button
-            className="ghost-button"
-            disabled={busy}
-            type="button"
-            onClick={() => document.getElementById("roomCode")?.focus()}
-          >
-            방 입장
+
+          {homeMode === "games" && (
+            <div className="game-picker" aria-label="Game select">
+              {GAME_PHASES.map((phase) => (
+                <button
+                  key={phase.id}
+                  className={`game-option${phase.enabled ? " is-live" : ""}`}
+                  disabled={busy || !phase.enabled}
+                  type="button"
+                  onClick={() => {
+                    if (phase.enabled) {
+                      void onCreateRoom();
+                    }
+                  }}
+                >
+                  {phase.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <button type="button" disabled={busy} onClick={() => setHomeMode("join")}>
+            {"\ubc29 \uc785\uc7a5"}
           </button>
         </div>
-      </section>
 
-      <form
-        className="panel action-panel"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void onJoinRoom(joinCode);
-        }}
-      >
-        <label htmlFor="roomCode">방 입장 코드</label>
-        <input
-          autoCapitalize="characters"
-          id="roomCode"
-          maxLength={4}
-          placeholder="ABCD"
-          value={joinCode}
-          onChange={(event) => setJoinCode(event.target.value.toUpperCase())}
-        />
-        <button className="secondary-button" disabled={busy || !nickname.trim() || joinCode.length !== 4} type="submit">
-          방 입장
-        </button>
-        {message && <p className="form-message">{message}</p>}
-      </form>
+        {homeMode === "join" && (
+          <form
+            className="join-code-holder"
+            aria-label="Join room"
+            onSubmit={(event) => {
+              event.preventDefault();
+              requestJoin();
+            }}
+          >
+            <input
+              autoCapitalize="characters"
+              aria-label="room code"
+              className="home-code-input"
+              id="roomCode"
+              maxLength={4}
+              placeholder={"\ubc29 \uc785\uc7a5 \ucf54\ub4dc"}
+              value={joinCode}
+              onChange={(event) => setJoinCode(event.target.value.toUpperCase())}
+            />
+            <button className="join-play-button" disabled={busy || joinCode.length !== 4} type="submit" aria-label="Play">
+              {"\u25b6"}
+            </button>
+          </form>
+        )}
+
+        {message && <p className="form-message home-message">{message}</p>}
+      </div>
     </section>
   );
 }
@@ -411,87 +409,45 @@ type GameRoomProps = {
   store: RoomStore;
 };
 
-type DartFlight = {
-  aimOffset: number;
-  charge: number;
-  landAt: number;
-  nickname: string;
-  startedAt: number;
-  uid: string;
-};
-
 function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRoomProps) {
   const now = useNow(room.status === "countdown" || room.status === "playing");
   const prevStatusRef = useRef(room.status);
   const isHost = room.hostUid === currentUid;
-  const hasThrown = Boolean(room.throws?.[currentUid]);
   const countdownLeft = Math.max(0, Math.ceil(((room.startAt ?? now) - now) / 1000));
-  const spinStartAt = room.spinStartAt ?? null;
-  const playingElapsed = spinStartAt ? now - spinStartAt : 0;
-  const throwWindowOpen = canThrowAtSpeed(spinStartAt, now, room.spinBoosts);
-  const currentSpinFactor = getCurrentSpinFactor(spinStartAt, now, room.spinBoosts);
-  const activeFlights = useMemo(
-    () =>
-      Object.entries(room.throws ?? {})
-        .filter(([, entry]) => entry.launchedAt && now < entry.throwAt)
-        .map(([uid, entry]) => ({
-          aimOffset: entry.aimOffset ?? 0,
-          charge: entry.charge ?? 1,
-          landAt: entry.throwAt,
-          nickname: entry.nickname,
-          startedAt: entry.launchedAt ?? entry.throwAt - 680,
-          uid,
-        })),
-    [now, room.throws],
-  );
+  const finalistIds = room.finalists?.length ? room.finalists : selectFinalists(room);
 
   useEffect(() => {
-    if (room.status !== "countdown" || !room.startAt || now < room.startAt) {
+    if (!isHost || room.status !== "countdown" || !room.startAt || now < room.startAt) {
       return;
     }
 
     store.setPlaying(roomCode).catch(console.error);
-  }, [now, room.startAt, room.status, roomCode, store]);
+  }, [isHost, now, room.startAt, room.status, roomCode, store]);
 
   useEffect(() => {
-    if (room.status !== "playing") {
+    if (!isHost || room.status !== "playing" || !room.raceStartedAt || !hasRaceWinner(room, now)) {
       return;
     }
 
-    if (!spinStartAt) {
-      return;
-    }
-
-    if (playingElapsed < ROUND_DURATION_MS) {
-      return;
-    }
-
-    const result = calculateResult(room);
-    if (result) {
-      store.finishGame(roomCode, result).catch(console.error);
-    }
-  }, [playingElapsed, room, room.status, roomCode, spinStartAt, store]);
+    store.finishGame(roomCode, calculateRaceResult(room)).catch(console.error);
+  }, [isHost, now, room, room.status, roomCode, store]);
 
   useEffect(() => {
+    if (room.status === "playing" && prevStatusRef.current !== "playing") {
+      audio.playSpin(1.2);
+    }
+
     if (room.status === "result" && room.result && prevStatusRef.current !== "result") {
       audio.playResult();
     }
+
     prevStatusRef.current = room.status;
   }, [audio, room.result, room.status]);
 
   const handleStart = () => {
     audio.arm();
+    audio.playGrab();
     store.startGame(roomCode).catch(console.error);
-  };
-
-  const handleThrow = (throwEntry?: Partial<ThrowEntry>) => {
-    audio.playThrow();
-    store.throwDart(roomCode, nickname, throwEntry).catch(console.error);
-  };
-
-  const handleSpinStart = (boostPower: number) => {
-    audio.playSpin(Math.abs(boostPower) / 4.2);
-    store.startSpin(roomCode, boostPower).catch(console.error);
   };
 
   const handleReset = () => {
@@ -502,6 +458,7 @@ function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRo
     return (
       <section className="stage countdown-stage">
         <RoomSummary room={room} roomCode={roomCode} />
+        <FinalistStrip finalistIds={finalistIds} />
         <div className="countdown-number">{countdownLeft || "GO"}</div>
       </section>
     );
@@ -509,68 +466,19 @@ function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRo
 
   if (room.status === "playing") {
     return (
-      <section className="stage">
+      <section className="stage race-stage">
         <RoomSummary room={room} roomCode={roomCode} />
-        <RouletteWheel canControl={isHost} flights={activeFlights} now={now} room={room} onSpinStart={handleSpinStart} />
-        <div className="throw-panel">
-          <div>
-            <p className="status-label">{hasThrown ? "다트 기록 완료" : "현재 투척"}</p>
-            <strong>{throwCount(room)} / {playerCount(room)}</strong>
-          </div>
-          <button className="primary-button throw-button" disabled={hasThrown || !spinStartAt} type="button" onClick={() => handleThrow()}>
-            Throw Dart
-          </button>
-        </div>
-        <ThrowList room={room} />
-        <DartRack
-          audio={audio}
-          currentSpeed={currentSpinFactor}
-          currentUid={currentUid}
-          onAimUpdate={(aimOffset, isHolding) => {
-            store
-              .updateDartAim(
-                roomCode,
-                isHolding
-                  ? {
-                      aimOffset,
-                      isHolding,
-                      nickname,
-                      updatedAt: Date.now(),
-                    }
-                  : null,
-              )
-              .catch(console.error);
-          }}
-          onLaunch={(charge, aimOffset, durationMs) => {
-            const startedAt = Date.now();
-            handleThrow({
-              aimOffset,
-              charge,
-              launchedAt: startedAt,
-              throwAt: startedAt + durationMs,
-            });
-          }}
-          room={room}
-          spinReady={Boolean(spinStartAt)}
-          throwWindowOpen={throwWindowOpen}
-        />
+        <RaceScoreboard room={room} now={now} />
+        <PixiSushiRaceTrack room={room} now={now} />
       </section>
     );
   }
 
   if (room.status === "result" && room.result) {
-    const selectedMenu = menuById.get(room.result.menuId) ?? menuCards[0];
-
     return (
       <section className="stage">
         <RoomSummary room={room} roomCode={roomCode} />
-        <ResultView
-          isHost={isHost}
-          menu={selectedMenu}
-          roomCode={roomCode}
-          room={room}
-          onReset={handleReset}
-        />
+        <ResultView isHost={isHost} room={room} roomCode={roomCode} onReset={handleReset} />
       </section>
     );
   }
@@ -579,14 +487,15 @@ function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRo
     <section className="stage lobby-stage">
       <RoomSummary room={room} roomCode={roomCode} />
       <PlayerList room={room} />
-      {isHost ? (
-        <button className="primary-button start-button" type="button" onClick={handleStart}>
-          게임 시작
-        </button>
-      ) : (
-        <p className="waiting-text">방장이 시작하면 바로 카운트다운이 시작됩니다.</p>
-      )}
-      <MenuPreview />
+      <VoteBoard
+        currentUid={currentUid}
+        isHost={isHost}
+        nickname={nickname}
+        room={room}
+        roomCode={roomCode}
+        store={store}
+        onStart={handleStart}
+      />
     </section>
   );
 }
@@ -614,7 +523,7 @@ function RoomSummary({ room, roomCode }: RoomSummaryProps) {
       </div>
       <div className="summary-stat">
         <span>{playerCount(room)}명</span>
-        <span>{room.status}</span>
+        <span>{getRoomStepLabel(room.status)}</span>
       </div>
       <button className="icon-button" type="button" title="초대 링크 복사" onClick={copyShareUrl}>
         {copied ? "OK" : "↗"}
@@ -636,7 +545,7 @@ function PlayerList({ room }: PlayerListProps) {
           <li key={uid}>
             <span className="player-avatar">{player.nickname.slice(0, 1).toUpperCase()}</span>
             <span>{player.nickname}</span>
-            {uid === room.hostUid && <em>host</em>}
+            <em>{uid === room.hostUid ? "host" : `${getVoteCount(room, uid)}/${VOTE_LIMIT}`}</em>
           </li>
         ))}
       </ul>
@@ -644,221 +553,255 @@ function PlayerList({ room }: PlayerListProps) {
   );
 }
 
-type RouletteWheelProps = {
-  canControl: boolean;
-  flights: DartFlight[];
+type VoteBoardProps = {
+  currentUid: string;
+  isHost: boolean;
+  nickname: string;
   room: RoomState;
-  now: number;
-  onSpinStart: (boostPower: number) => void;
+  roomCode: string;
+  store: RoomStore;
+  onStart: () => void;
 };
 
-function RouletteWheel({ canControl, flights, room, now, onSpinStart }: RouletteWheelProps) {
-  const gestureRef = useRef<{ angle: number; pointerId: number; startedAt: number; x: number; y: number } | null>(null);
-  const lastWheelBoostAtRef = useRef(0);
-  const [isArmed, setIsArmed] = useState(false);
-  const spinStartAt = room.spinStartAt ?? null;
-  const isSpinning = Boolean(spinStartAt);
-  const elapsed = spinStartAt ? Math.max(0, now - spinStartAt) : 0;
-  const activeBoostPower = getActiveBoostPower(room.spinBoosts, now);
-  const angle = getWheelRotation(room.seed, spinStartAt, room.wheelSpeed, now, room.spinBoosts);
-  const boostMagnitude = Math.abs(activeBoostPower);
-  const spinIntensity = Math.min(1, getSpinIntensity(elapsed) + boostMagnitude / 18);
-  const wheelStyle = {
-    "--boost-intensity": Math.min(1, boostMagnitude / 16).toFixed(3),
-    "--spin-intensity": spinIntensity.toFixed(3),
-    transform: `translateZ(0) rotate(${angle}deg)`,
-  } as CSSProperties;
+function VoteBoard({ currentUid, isHost, nickname, room, roomCode, store, onStart }: VoteBoardProps) {
+  const savedVotes = room.votes?.[currentUid]?.menuIds ?? [];
+  const [draftVotes, setDraftVotes] = useState(savedVotes);
+  const tallies = useMemo(() => getVoteTallies(room), [room]);
+  const tallyByMenuId = useMemo(() => new Map(tallies.map((entry) => [entry.menuId, entry.votes])), [tallies]);
+  const finalists = useMemo(() => selectFinalists(room), [room]);
+  const hasAnyVote = tallies.some((entry) => entry.votes > 0);
 
-  const getPointerAngle = (target: HTMLElement, x: number, y: number) => {
-    const rect = target.getBoundingClientRect();
-    return Math.atan2(y - (rect.top + rect.height / 2), x - (rect.left + rect.width / 2));
+  useEffect(() => {
+    setDraftVotes(savedVotes);
+  }, [savedVotes.join("|")]);
+
+  const submitVote = (menuIds: string[]) => {
+    setDraftVotes(menuIds);
+    store.submitVote(roomCode, nickname, menuIds).catch(console.error);
   };
 
-  const getAngleDelta = (from: number, to: number) => {
-    let delta = to - from;
-
-    while (delta > Math.PI) delta -= Math.PI * 2;
-    while (delta < -Math.PI) delta += Math.PI * 2;
-
-    return delta;
-  };
-
-  const handlePointerDown = (event: PointerEvent<HTMLElement>) => {
-    if (!canControl || event.button !== 0) {
+  const toggleVote = (menuId: string) => {
+    if (draftVotes.includes(menuId)) {
+      submitVote(draftVotes.filter((id) => id !== menuId));
       return;
     }
 
-    setIsArmed(true);
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-    gestureRef.current = {
-      angle: getPointerAngle(event.currentTarget, event.clientX, event.clientY),
-      pointerId: event.pointerId,
-      startedAt: Date.now(),
-      x: event.clientX,
-      y: event.clientY,
-    };
-  };
-
-  const handlePointerUp = (event: PointerEvent<HTMLElement>) => {
-    const gesture = gestureRef.current;
-    if (!gesture || gesture.pointerId !== event.pointerId) {
+    if (draftVotes.length >= VOTE_LIMIT) {
       return;
     }
 
-    gestureRef.current = null;
-
-    const dx = event.clientX - gesture.x;
-    const dy = event.clientY - gesture.y;
-    const angleDelta = getAngleDelta(gesture.angle, getPointerAngle(event.currentTarget, event.clientX, event.clientY));
-    const distance = Math.hypot(dx, dy);
-    const arcDistance = Math.abs(angleDelta) * 180;
-    const effectiveDistance = Math.max(distance, arcDistance);
-    const duration = Date.now() - gesture.startedAt;
-
-    if (effectiveDistance < 14) {
-      return;
-    }
-
-    onSpinStart(getGestureBoostPower(effectiveDistance, duration, angleDelta >= 0 ? 1 : -1));
-  };
-
-  const handlePointerCancel = (event: PointerEvent<HTMLElement>) => {
-    if (gestureRef.current?.pointerId === event.pointerId) {
-      gestureRef.current = null;
-    }
-  };
-
-  const handleWheel = (event: WheelEvent<HTMLElement>) => {
-    if (!canControl) {
-      return;
-    }
-
-    if (!isArmed && !isSpinning) {
-      return;
-    }
-
-    const nowMs = Date.now();
-    if (nowMs - lastWheelBoostAtRef.current < 70) {
-      return;
-    }
-
-    const dominantDelta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
-    if (Math.abs(dominantDelta) < 1) {
-      return;
-    }
-
-    event.preventDefault();
-    lastWheelBoostAtRef.current = nowMs;
-    onSpinStart(getGestureBoostPower(Math.min(240, Math.abs(dominantDelta)), 90, dominantDelta >= 0 ? 1 : -1));
+    submitVote([...draftVotes, menuId]);
   };
 
   return (
-    <section
-      className={`wheel-zone${isSpinning ? " is-spinning" : " is-idle"}${isArmed ? " is-armed" : ""}${canControl ? "" : " is-locked"}`}
-      onPointerCancel={handlePointerCancel}
-      onPointerDown={handlePointerDown}
-      onPointerUp={handlePointerUp}
-      onWheel={handleWheel}
-    >
-      <div className="dart-pointer" />
-      <div
-        aria-label={isSpinning ? "회전 중인 룰렛" : "좌클릭으로 룰렛 돌리기"}
-        className="wheel"
-        role="button"
-        style={wheelStyle}
-        tabIndex={0}
-      >
-        {room.menuCards.map((menuId, index) => {
-          const menu = menuById.get(menuId) ?? menuCards[index % menuCards.length];
+    <section className="vote-layout">
+      <div className="vote-head">
+        <div>
+          <p className="status-label">최종 투표</p>
+          <h2>20개 메뉴 중 5개 출전</h2>
+        </div>
+        <strong>
+          {draftVotes.length}/{VOTE_LIMIT}
+        </strong>
+      </div>
+
+      <div className="finalist-preview" aria-label="Projected finalists">
+        {finalists.map((menuId) => {
+          const menu = menuById.get(menuId);
+          const racer = getRacerForMenu(menuId);
 
           return (
-            <article
-              className="wheel-card"
-              key={menu.id}
-              style={{ "--angle": `${index * SLICE_DEG}deg` } as CSSProperties}
-            >
-              <MenuImage menu={menu} variant="food" />
-              <span>{menu.name}</span>
+            <article className="finalist-chip" key={menuId} style={{ "--chip-color": racer.color } as CSSProperties}>
+              {menu && <MenuImage menu={menu} variant="preview" />}
+              <strong>{getMenuDisplayName(menu)}</strong>
             </article>
           );
         })}
       </div>
-      <RemoteAimLayer currentTime={now} room={room} />
-      {Object.entries(room.throws ?? {}).filter(([, entry]) => now >= entry.throwAt).map(([uid, entry]) => {
-        const impact = getThrowImpactVisual(room, entry.throwAt);
 
-        return (
-          <div
-            aria-hidden="true"
-            className="impact-dart"
-            key={`${uid}-${entry.throwAt}`}
-            style={
-              {
-                "--impact-rotation": `${impact.rotationDeg}deg`,
-                "--impact-x": `${impact.xPx}px`,
-                "--impact-y": `${impact.yPx}px`,
-              } as CSSProperties
-            }
-          >
-            <span className="impact-dart-piece">
-              <span className="dart-tip" />
-              <span className="dart-body" />
-              <span className="dart-fin top" />
-              <span className="dart-fin bottom" />
-            </span>
-          </div>
-        );
-      })}
-      <DartFlightCanvas flights={flights} room={room} />
-      <div className="wheel-hub">
-        <span>DART</span>
+      <div className="candidate-grid">
+        {menuCards.map((menu) => {
+          const racer = getRacerForMenu(menu.id);
+          const selected = draftVotes.includes(menu.id);
+          const locked = !selected && draftVotes.length >= VOTE_LIMIT;
+
+          return (
+            <button
+              className={`candidate-card${selected ? " is-selected" : ""}`}
+              disabled={locked}
+              key={menu.id}
+              style={{ "--candidate-color": racer.color, "--candidate-accent": racer.accent } as CSSProperties}
+              type="button"
+              onClick={() => toggleVote(menu.id)}
+            >
+              <MenuImage menu={menu} variant="thumb" />
+              <strong>{getMenuDisplayName(menu)}</strong>
+              <em>{tallyByMenuId.get(menu.id) ?? 0}</em>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="start-row">
+        {isHost ? (
+          <button className="primary-button start-button" disabled={!hasAnyVote} type="button" onClick={onStart}>
+            상위 5개 레이스 시작
+          </button>
+        ) : (
+          <p className="waiting-text">방장이 시작하면 상위 5개 후보로 바로 출발합니다.</p>
+        )}
       </div>
     </section>
   );
 }
 
-type RemoteAimLayerProps = {
-  currentTime: number;
-  room: RoomState;
+type FinalistStripProps = {
+  finalistIds: string[];
 };
 
-function RemoteAimLayer({ currentTime, room }: RemoteAimLayerProps) {
-  const activeAims = Object.entries(room.dartAims ?? {}).filter(
-    ([uid, aim]) => !room.throws?.[uid] && aim.isHolding && currentTime - aim.updatedAt < 2400,
-  );
-
+function FinalistStrip({ finalistIds }: FinalistStripProps) {
   return (
-    <div className="remote-aim-layer" aria-hidden="true">
-      {activeAims.map(([uid, aim]) => (
-        <div
-          className="remote-aim"
-          key={uid}
-          style={{ "--aim-offset": aim.aimOffset.toFixed(3) } as CSSProperties}
-        >
-          <span className="remote-aim-name">{aim.nickname}</span>
-          <span className="remote-aim-dart">
-            <span className="dart-tip" />
-            <span className="dart-body" />
-            <span className="dart-fin top" />
-            <span className="dart-fin bottom" />
-          </span>
-        </div>
-      ))}
-    </div>
+    <section className="finalist-strip">
+      {finalistIds.slice(0, FINALIST_COUNT).map((menuId) => {
+        const menu = menuById.get(menuId);
+        const racer = getRacerForMenu(menuId);
+
+        return (
+          <article className="finalist-strip-card" key={menuId} style={{ "--chip-color": racer.color } as CSSProperties}>
+            <span>{racer.icon}</span>
+            <strong>{getMenuDisplayName(menu)}</strong>
+          </article>
+        );
+      })}
+    </section>
   );
 }
 
-type DartFlightCanvasProps = {
-  flights: DartFlight[];
+type RaceScoreboardProps = {
   room: RoomState;
+  now: number;
 };
 
-function DartFlightCanvas({ flights, room }: DartFlightCanvasProps) {
+function RaceScoreboard({ room, now }: RaceScoreboardProps) {
+  const startedAt = room.raceStartedAt ?? now;
+  const elapsedMs = Math.max(0, now - startedAt);
+  const activeEvents = getActiveRaceEvents(room, now);
+  const activeEventLabel = activeEvents.map((event) => RACE_EVENT_META[event.type].label).join(" · ");
+  const activeEventIcons = activeEvents.map((event) => RACE_EVENT_META[event.type].icon).join("");
+  const leaders = getRaceLaneStates(room, now)
+    .slice()
+    .sort((a, b) => a.rank - b.rank)
+    .slice(0, 3);
+
+  return (
+    <section className="race-scoreboard">
+      <div>
+        <p className="status-label">Race Time</p>
+        <strong>{formatRaceTime(elapsedMs)}</strong>
+      </div>
+      <div className="leader-stack">
+        {leaders.map((lane) => (
+          <span key={lane.menuId}>
+            {lane.rank}. {lane.menuName}
+          </span>
+        ))}
+      </div>
+      <div className={`event-light${activeEvents.length ? " is-active" : ""}`} title={activeEventLabel || "이벤트 대기"}>
+        {activeEventIcons || "GO"}
+      </div>
+    </section>
+  );
+}
+
+type SushiRaceTrackProps = {
+  room: RoomState;
+  now: number;
+};
+
+const drawRoundRect = (
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+) => {
+  const safeRadius = Math.min(radius, width / 2, height / 2);
+
+  context.beginPath();
+  context.moveTo(x + safeRadius, y);
+  context.arcTo(x + width, y, x + width, y + height, safeRadius);
+  context.arcTo(x + width, y + height, x, y + height, safeRadius);
+  context.arcTo(x, y + height, x, y, safeRadius);
+  context.arcTo(x, y, x + width, y, safeRadius);
+  context.closePath();
+};
+
+const hexToRgb = (hex: string) => {
+  const normalized = hex.replace("#", "");
+  const value = Number.parseInt(normalized.length === 3 ? normalized.replace(/(.)/g, "$1$1") : normalized, 16);
+
+  return {
+    r: (value >> 16) & 255,
+    g: (value >> 8) & 255,
+    b: value & 255,
+  };
+};
+
+const withAlpha = (hex: string, alpha: number) => {
+  const { r, g, b } = hexToRgb(hex);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
+const drawEmoji = (
+  context: CanvasRenderingContext2D,
+  value: string,
+  x: number,
+  y: number,
+  size: number,
+  align: CanvasTextAlign = "center",
+) => {
+  context.save();
+  context.font = `${size}px "Apple Color Emoji", "Segoe UI Emoji", sans-serif`;
+  context.textAlign = align;
+  context.textBaseline = "middle";
+  context.fillText(value, x, y);
+  context.restore();
+};
+
+function SushiRaceTrack({ room, now }: SushiRaceTrackProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
+  const [, setImageVersion] = useState(0);
+  const laneStates = getRaceLaneStates(room, now);
+  const activeEvents = getActiveRaceEvents(room, now);
+  const menuIds = laneStates.map((lane) => lane.menuId).join("|");
+
+  useEffect(() => {
+    laneStates.forEach((lane) => {
+      if (imageCacheRef.current.has(lane.menuId)) {
+        return;
+      }
+
+      const menu = menuById.get(lane.menuId) ?? menuCards[0];
+      const image = new Image();
+      let triedFallback = false;
+
+      image.onload = () => setImageVersion((version) => version + 1);
+      image.onerror = () => {
+        if (!triedFallback) {
+          triedFallback = true;
+          image.src = menu.fallbackImageUrl;
+        }
+      };
+      image.src = menu.imageUrl;
+      imageCacheRef.current.set(lane.menuId, image);
+    });
+  }, [laneStates, menuIds]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || flights.length === 0) {
+    if (!canvas) {
       return;
     }
 
@@ -867,350 +810,489 @@ function DartFlightCanvas({ flights, room }: DartFlightCanvasProps) {
       return;
     }
 
-    let frame = 0;
-    const drawDart = (x: number, y: number, angle: number, scale: number) => {
+    const rect = canvas.getBoundingClientRect();
+    const width = Math.max(320, rect.width);
+    const height = Math.max(360, rect.height);
+    const dpr = window.devicePixelRatio || 1;
+
+    if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
+    }
+
+    context.setTransform(dpr, 0, 0, dpr, 0, 0);
+    context.clearRect(0, 0, width, height);
+
+    const padding = width < 680 ? 10 : 16;
+    const labelWidth = width < 680 ? 94 : 138;
+    const gap = width < 680 ? 7 : 9;
+    const laneHeight = (height - padding * 2 - gap * (laneStates.length - 1)) / laneStates.length;
+    const trackX = padding + labelWidth;
+    const finishX = width - padding - (width < 680 ? 18 : 28);
+    const runnerStartX = trackX + 28;
+    const runnerEndX = finishX - 24;
+    const beltOffset = (now / 14) % 76;
+
+    context.fillStyle = "#fffaf0";
+    drawRoundRect(context, 0, 0, width, height, 8);
+    context.fill();
+
+    for (let x = padding; x < width - padding; x += 44) {
+      context.fillStyle = "rgba(15, 118, 110, 0.055)";
+      context.fillRect(x, padding, 18, height - padding * 2);
+    }
+
+    context.save();
+    context.fillStyle = "#111827";
+    drawRoundRect(context, finishX, padding + 4, 14, height - padding * 2 - 8, 3);
+    context.fill();
+    for (let y = padding + 4; y < height - padding; y += 18) {
+      context.fillStyle = Math.floor((y - padding) / 18) % 2 === 0 ? "#ffffff" : "#111827";
+      context.fillRect(finishX, y, 14, 9);
+    }
+    context.restore();
+
+    laneStates.forEach((lane, laneIndex) => {
+      const laneY = padding + laneIndex * (laneHeight + gap);
+      const laneMidY = laneY + laneHeight / 2;
+      const activeLaneEvents = activeEvents.filter((event) => event.affectsAll || event.laneIndex === laneIndex);
+      const hasReverse = activeLaneEvents.some((event) => event.type === "reverse-belt");
+      const hasGreenTea = activeLaneEvents.some((event) => event.type === "green-tea");
+      const hasChopsticks = activeLaneEvents.some((event) => event.type === "chopsticks");
+      const runnerX = runnerStartX + lane.displayProgress * Math.max(1, runnerEndX - runnerStartX);
+      const runnerPulse = Math.sin(now / 130 + laneIndex) * 3;
+      const runnerY = laneMidY + (lane.isEliminated ? 3 : runnerPulse);
+
       context.save();
-      context.translate(x, y);
-      context.rotate(angle);
-      context.scale(scale, scale);
-      context.lineCap = "round";
-      context.lineJoin = "round";
-      context.shadowColor = "rgba(17, 24, 39, 0.28)";
-      context.shadowBlur = 10;
-      context.shadowOffsetY = 5;
-      context.fillStyle = "#111827";
-      context.beginPath();
-      context.moveTo(-44, 0);
-      context.lineTo(-28, -6);
-      context.lineTo(-28, 6);
-      context.closePath();
+      context.globalAlpha = lane.isEliminated ? 0.68 : 1;
+      context.fillStyle = withAlpha(lane.accent, 0.34);
+      context.strokeStyle = withAlpha(lane.color, 0.28);
+      context.lineWidth = 1;
+      drawRoundRect(context, padding, laneY, width - padding * 2, laneHeight, 8);
       context.fill();
-      context.fillRect(-28, -3, 54, 6);
-      context.fillStyle = "#2563eb";
-      context.beginPath();
-      context.moveTo(24, 0);
-      context.lineTo(50, -15);
-      context.lineTo(44, 0);
-      context.lineTo(50, 15);
-      context.closePath();
+      context.stroke();
+
+      context.fillStyle = lane.color;
+      drawRoundRect(context, padding + 8, laneMidY - 17, 34, 34, 8);
       context.fill();
-      context.restore();
-    };
+      context.fillStyle = "#ffffff";
+      context.font = "900 16px Inter, sans-serif";
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      context.fillText(String(laneIndex + 1), padding + 25, laneMidY);
 
-    const tick = () => {
-      const rect = canvas.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
-      const width = Math.max(1, Math.floor(rect.width * dpr));
-      const height = Math.max(1, Math.floor(rect.height * dpr));
+      context.fillStyle = "#172033";
+      context.font = `900 ${width < 680 ? 12 : 14}px Pretendard, Inter, sans-serif`;
+      context.textAlign = "left";
+      context.textBaseline = "middle";
+      context.fillText(lane.menuName, padding + 50, laneMidY - 10, labelWidth - 56);
+      context.fillStyle = "#6b7280";
+      context.font = `800 ${width < 680 ? 10 : 12}px Pretendard, Inter, sans-serif`;
+      context.fillText(lane.characterName, padding + 50, laneMidY + 10, labelWidth - 56);
 
-      if (canvas.width !== width || canvas.height !== height) {
-        canvas.width = width;
-        canvas.height = height;
-      }
+      const beltY = laneY + laneHeight * 0.25;
+      const beltHeight = laneHeight * 0.5;
+      const beltWidth = finishX - trackX - 6;
 
-      context.setTransform(dpr, 0, 0, dpr, 0, 0);
-      context.clearRect(0, 0, rect.width, rect.height);
+      context.fillStyle = hasReverse ? "#dbeafe" : "#e5e7eb";
+      context.strokeStyle = hasReverse ? "#2563eb" : "#a1a1aa";
+      context.lineWidth = 1;
+      drawRoundRect(context, trackX, beltY, beltWidth, beltHeight, beltHeight / 2);
+      context.fill();
+      context.stroke();
 
-      const stillFlying = flights.some((flight) => Date.now() < flight.landAt);
-
-      flights.forEach((flight) => {
-        const duration = Math.max(520, flight.landAt - flight.startedAt);
-        const impact = getThrowImpactVisual(room, flight.landAt);
-        const progress = Math.min(1, Math.max(0, (Date.now() - flight.startedAt) / duration));
-        const eased = 1 - Math.pow(1 - progress, 3);
-        const startX = rect.width * (0.5 + flight.aimOffset * 0.38);
-        const startY = rect.height * 0.99;
-        const endX = rect.width / 2 + impact.xPx;
-        const endY = rect.height / 2 - impact.yPx;
-        const controlX = rect.width * (0.5 + flight.aimOffset * 0.18);
-        const controlY = rect.height * (0.5 - flight.charge * 0.3);
-        const oneMinus = 1 - eased;
-        const x = oneMinus * oneMinus * startX + 2 * oneMinus * eased * controlX + eased * eased * endX;
-        const y = oneMinus * oneMinus * startY + 2 * oneMinus * eased * controlY + eased * eased * endY;
-        const nextT = Math.min(1, eased + 0.02);
-        const nextOneMinus = 1 - nextT;
-        const nextX = nextOneMinus * nextOneMinus * startX + 2 * nextOneMinus * nextT * controlX + nextT * nextT * endX;
-        const nextY = nextOneMinus * nextOneMinus * startY + 2 * nextOneMinus * nextT * controlY + nextT * nextT * endY;
-        const angle = Math.atan2(nextY - y, nextX - x);
-
-        context.strokeStyle = `rgba(37, 99, 235, ${0.3 * (1 - progress)})`;
-        context.lineWidth = 7;
+      context.save();
+      drawRoundRect(context, trackX + 2, beltY + 2, beltWidth - 4, beltHeight - 4, beltHeight / 2);
+      context.clip();
+      const direction = hasReverse ? -1 : 1;
+      for (let x = trackX - 80; x < finishX + 80; x += 38) {
+        const rollerX = x + direction * beltOffset;
+        context.fillStyle = "rgba(255, 255, 255, 0.86)";
         context.beginPath();
-        context.moveTo(startX, startY);
-        context.quadraticCurveTo(controlX, controlY, x, y);
-        context.stroke();
-        drawDart(x, y, angle, 0.78 + eased * 0.16);
-      });
-
-      if (stillFlying) {
-        frame = window.requestAnimationFrame(tick);
+        context.arc(rollerX, laneMidY, 7, 0, Math.PI * 2);
+        context.fill();
+        context.fillStyle = "rgba(113, 113, 122, 0.32)";
+        context.fillRect(rollerX + 13, beltY + 4, 5, beltHeight - 8);
       }
-    };
+      context.restore();
 
-    frame = window.requestAnimationFrame(tick);
+      if (hasGreenTea) {
+        context.fillStyle = "rgba(22, 163, 74, 0.5)";
+        context.beginPath();
+        context.ellipse(runnerX + 8, beltY + beltHeight - 9, 48, 12, -0.08, 0, Math.PI * 2);
+        context.fill();
+        context.beginPath();
+        context.ellipse(runnerX - 28, beltY + beltHeight - 6, 21, 7, 0.18, 0, Math.PI * 2);
+        context.fill();
+        drawEmoji(context, "🍵", runnerX - 54, beltY + 10, 23);
+      }
 
-    return () => window.cancelAnimationFrame(frame);
-  }, [flights, room]);
+      if (hasReverse) {
+        context.fillStyle = "#1d4ed8";
+        drawRoundRect(context, finishX - 62, laneMidY - 18, 36, 36, 8);
+        context.fill();
+        context.fillStyle = "#ffffff";
+        context.font = "950 24px Inter, sans-serif";
+        context.textAlign = "center";
+        context.textBaseline = "middle";
+        context.fillText("↩", finishX - 44, laneMidY + 1);
+      }
 
-  return <canvas aria-hidden="true" className="dart-flight-canvas" ref={canvasRef} />;
-}
+      context.fillStyle = "rgba(17, 24, 39, 0.2)";
+      context.beginPath();
+      context.ellipse(runnerX, laneMidY + beltHeight * 0.28, 30, 8, 0, 0, Math.PI * 2);
+      context.fill();
 
-type ThrowListProps = {
-  room: RoomState;
-};
+      context.fillStyle = "#ffffff";
+      context.strokeStyle = lane.color;
+      context.lineWidth = 3;
+      context.beginPath();
+      context.arc(runnerX, runnerY, 28, 0, Math.PI * 2);
+      context.fill();
+      context.stroke();
 
-function ThrowList({ room }: ThrowListProps) {
-  const throws = Object.values(room.throws ?? {});
+      const image = imageCacheRef.current.get(lane.menuId);
+      if (image?.complete && image.naturalWidth > 0) {
+        context.save();
+        context.beginPath();
+        context.arc(runnerX, runnerY, 23, 0, Math.PI * 2);
+        context.clip();
+        context.drawImage(image, runnerX - 25, runnerY - 25, 50, 50);
+        context.restore();
+      } else {
+        drawEmoji(context, lane.icon, runnerX, runnerY, 24);
+      }
+
+      context.fillStyle = "#ffffff";
+      context.strokeStyle = withAlpha(lane.color, 0.3);
+      context.lineWidth = 1;
+      drawRoundRect(context, runnerX + 16, runnerY - 36, 36, 32, 8);
+      context.fill();
+      context.stroke();
+      drawEmoji(context, lane.icon, runnerX + 34, runnerY - 20, 19);
+
+      if (hasChopsticks) {
+        context.strokeStyle = "#9a5c24";
+        context.lineWidth = 7;
+        context.lineCap = "round";
+        context.beginPath();
+        context.moveTo(runnerX - 16, laneY - 12);
+        context.lineTo(runnerX - 4, runnerY - 6);
+        context.moveTo(runnerX + 18, laneY - 12);
+        context.lineTo(runnerX + 4, runnerY - 6);
+        context.stroke();
+      }
+
+      if (lane.isEliminated) {
+        context.fillStyle = "#991b1b";
+        drawRoundRect(context, runnerX - 25, laneY + 6, 50, 24, 999);
+        context.fill();
+        context.fillStyle = "#ffffff";
+        context.font = "950 12px Pretendard, Inter, sans-serif";
+        context.textAlign = "center";
+        context.textBaseline = "middle";
+        context.fillText("탈락", runnerX, laneY + 18);
+      }
+
+      if (lane.isFinished) {
+        drawEmoji(context, "🏁", runnerX + 46, runnerY - 18, 22);
+      }
+
+      context.restore();
+    });
+  }, [activeEvents, laneStates, now, room.seed]);
 
   return (
-    <section className="throw-list">
-      {throws.map((entry) => (
-        <span key={`${entry.nickname}-${entry.throwAt}`}>{entry.nickname}</span>
-      ))}
+    <section className="race-canvas-shell" aria-label="Sushi race track">
+      <canvas className="race-canvas" ref={canvasRef} />
+      <div className="sr-only">
+        {laneStates.map((lane) => `${lane.rank}위 ${lane.menuName} ${lane.isEliminated ? "탈락" : formatRaceTime(lane.finishMs)}`).join(", ")}
+      </div>
     </section>
   );
 }
 
-type DartRackProps = {
-  audio: ArcadeAudio;
-  currentSpeed: number;
-  currentUid: string;
-  onAimUpdate: (aimOffset: number, isHolding: boolean) => void;
-  onLaunch: (charge: number, aimOffset: number, durationMs: number) => void;
-  room: RoomState;
-  spinReady: boolean;
-  throwWindowOpen: boolean;
-};
-
-function DartRack({ audio, currentSpeed, currentUid, onAimUpdate, onLaunch, room, spinReady, throwWindowOpen }: DartRackProps) {
-  const CHARGE_CYCLE_MS = 1280;
-  const [heldUid, setHeldUid] = useState<string | null>(null);
-  const [aimOffset, setAimOffset] = useState(0);
-  const [, setChargeTick] = useState(0);
-  const [flyingUid, setFlyingUid] = useState<string | null>(null);
-  const holdRef = useRef<{ pointerId: number; startedAt: number; startX: number } | null>(null);
-  const throwTimerRef = useRef<number | null>(null);
-  const chargeFrameRef = useRef<number | null>(null);
-  const aimUpdateRef = useRef(0);
+function PixiSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const appRef = useRef<Application | null>(null);
+  const readyRef = useRef(false);
+  const textureRef = useRef<Map<string, Texture>>(new Map());
+  const [assetTick, setAssetTick] = useState(0);
+  const laneStates = getRaceLaneStates(room, now);
+  const activeEvents = getActiveRaceEvents(room, now);
+  const menuIds = laneStates.map((lane) => lane.menuId).join("|");
 
   useEffect(() => {
+    let cancelled = false;
+    const host = hostRef.current;
+    if (!host || appRef.current) {
+      return;
+    }
+
+    const app = new Application();
+    app
+      .init({
+        antialias: true,
+        autoDensity: true,
+        backgroundAlpha: 0,
+        height: Math.max(420, Math.round(host.getBoundingClientRect().height)),
+        resolution: window.devicePixelRatio || 1,
+        width: Math.max(320, Math.round(host.getBoundingClientRect().width)),
+      })
+      .then(() => {
+        if (cancelled) {
+          app.destroy(true);
+          return;
+        }
+
+        appRef.current = app;
+        host.appendChild(app.canvas);
+        readyRef.current = true;
+        setAssetTick((tick) => tick + 1);
+      })
+      .catch(console.error);
+
     return () => {
-      if (throwTimerRef.current) {
-        window.clearTimeout(throwTimerRef.current);
-      }
-      if (chargeFrameRef.current) {
-        window.cancelAnimationFrame(chargeFrameRef.current);
-      }
+      cancelled = true;
+      readyRef.current = false;
+      appRef.current?.destroy(true);
+      appRef.current = null;
     };
   }, []);
 
-  const currentHasThrown = Boolean(room.throws?.[currentUid]);
-  const canGrabCurrentDart = spinReady && !currentHasThrown && !flyingUid;
+  useEffect(() => {
+    let cancelled = false;
+    const assetUrls = [
+      "/background/sushi-restaurant-play-bg.png",
+      ...laneStates.map((lane) => menuById.get(lane.menuId)?.imageUrl ?? menuCards[0].imageUrl),
+    ];
 
-  const getChargePower = (startedAt: number) => {
-    const elapsed = Math.max(0, Date.now() - startedAt);
-    const cycleProgress = (elapsed % CHARGE_CYCLE_MS) / CHARGE_CYCLE_MS;
-    const triangleWave = cycleProgress < 0.5 ? cycleProgress * 2 : (1 - cycleProgress) * 2;
-    return 0.18 + triangleWave * 0.82;
-  };
+    assetUrls.forEach((url) => {
+      if (textureRef.current.has(url)) {
+        return;
+      }
 
-  const stopChargeLoop = () => {
-    if (chargeFrameRef.current) {
-      window.cancelAnimationFrame(chargeFrameRef.current);
-      chargeFrameRef.current = null;
-    }
-  };
+      Assets.load<Texture>(url)
+        .then((texture) => {
+          if (!cancelled) {
+            textureRef.current.set(url, texture);
+            setAssetTick((tick) => tick + 1);
+          }
+        })
+        .catch(console.error);
+    });
 
-  const startChargeLoop = () => {
-    stopChargeLoop();
-
-    const tick = () => {
-      setChargeTick(Date.now());
-      chargeFrameRef.current = window.requestAnimationFrame(tick);
+    return () => {
+      cancelled = true;
     };
+  }, [laneStates, menuIds]);
 
-    chargeFrameRef.current = window.requestAnimationFrame(tick);
-  };
-
-  const resetHold = () => {
-    holdRef.current = null;
-    stopChargeLoop();
-    setHeldUid(null);
-    setChargeTick(0);
-    setAimOffset(0);
-  };
-
-  const handlePointerDown = (uid: string, event: PointerEvent<HTMLButtonElement>) => {
-    if (event.button !== 0 || uid !== currentUid || !canGrabCurrentDart) {
-      audio.playDenied();
+  useEffect(() => {
+    const app = appRef.current;
+    const host = hostRef.current;
+    if (!app || !host || !readyRef.current) {
       return;
     }
 
-    audio.arm();
-    audio.playGrab();
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-    holdRef.current = {
-      pointerId: event.pointerId,
-      startedAt: Date.now(),
-      startX: event.clientX,
-    };
-    setHeldUid(uid);
-    setAimOffset(0);
-    onAimUpdate(0, true);
-    setChargeTick(Date.now());
-    startChargeLoop();
-  };
-
-  const handlePointerMove = (uid: string, event: PointerEvent<HTMLButtonElement>) => {
-    const hold = holdRef.current;
-    if (uid !== currentUid || heldUid !== uid || !hold || hold.pointerId !== event.pointerId) {
-      return;
+    const width = Math.max(320, Math.round(host.getBoundingClientRect().width));
+    const height = Math.max(420, Math.round(host.getBoundingClientRect().height));
+    if (app.renderer.width !== width || app.renderer.height !== height) {
+      app.renderer.resize(width, height);
     }
 
-    const nextAimOffset = Math.max(-1, Math.min(1, (event.clientX - hold.startX) / 120));
-    setAimOffset(nextAimOffset);
+    app.stage.removeChildren();
 
-    const nowMs = Date.now();
-    if (nowMs - aimUpdateRef.current > 80) {
-      aimUpdateRef.current = nowMs;
-      onAimUpdate(nextAimOffset, true);
-    }
-  };
-
-  const handleRelease = (uid: string, event: PointerEvent<HTMLButtonElement>) => {
-    const hold = holdRef.current;
-    if (uid !== currentUid || heldUid !== uid || !hold || hold.pointerId !== event.pointerId) {
-      return;
+    const backgroundTexture = textureRef.current.get("/background/sushi-restaurant-play-bg.png");
+    if (backgroundTexture) {
+      const background = new Sprite(backgroundTexture);
+      const scale = Math.max(width / background.texture.width, height / background.texture.height);
+      background.scale.set(scale);
+      background.x = (width - background.texture.width * scale) / 2;
+      background.y = (height - background.texture.height * scale) / 2;
+      app.stage.addChild(background);
     }
 
-    const finalCharge = getChargePower(hold.startedAt);
-    const finalAimOffset = aimOffset;
-    resetHold();
+    const overlay = new Graphics();
+    overlay.rect(0, 0, width, height).fill({ color: 0x140b06, alpha: 0.45 });
+    app.stage.addChild(overlay);
 
-    if (!canGrabCurrentDart || !throwWindowOpen || finalCharge < 0.34) {
-      onAimUpdate(0, false);
-      audio.playDenied();
-      return;
+    const padding = width < 720 ? 16 : 28;
+    const labelWidth = width < 720 ? 86 : 124;
+    const trackX = padding + labelWidth;
+    const finishX = width - padding - 34;
+    const startX = trackX + 24;
+    const endX = finishX - 34;
+    const railYs = [height * 0.42, height * 0.68];
+    const railHeight = width < 720 ? 82 : 100;
+    const beltOffset = (now / 13) % 72;
+
+    railYs.forEach((railY, railIndex) => {
+      const rail = new Graphics();
+      rail
+        .roundRect(trackX - 18, railY - railHeight / 2, finishX - trackX + 34, railHeight, railHeight / 2)
+        .fill({ color: railIndex === 0 ? 0x6b3f1f : 0x3d2414, alpha: 0.78 })
+        .stroke({ color: 0xffd08a, alpha: 0.4, width: 2 });
+      app.stage.addChild(rail);
+
+      const rollers = new Graphics();
+      for (let x = trackX - 72; x < finishX + 52; x += 36) {
+        const rollerX = x + beltOffset;
+        rollers.circle(rollerX, railY, 7).fill({ color: 0xfff7df, alpha: 0.72 });
+        rollers.rect(rollerX + 13, railY - railHeight / 2 + 9, 5, railHeight - 18).fill({ color: 0x1f130d, alpha: 0.28 });
+      }
+      app.stage.addChild(rollers);
+
+      const laneTag = new Text({
+        text: `${railIndex + 1} 레일`,
+        style: { fill: 0xffffff, fontFamily: "Pretendard, Inter, sans-serif", fontSize: 13, fontWeight: "900" },
+      });
+      laneTag.x = padding;
+      laneTag.y = railY - 10;
+      app.stage.addChild(laneTag);
+    });
+
+    const finish = new Graphics();
+    finish.roundRect(finishX, padding, 16, height - padding * 2, 4).fill({ color: 0x111827, alpha: 0.94 });
+    for (let y = padding; y < height - padding; y += 18) {
+      finish.rect(finishX, y, 16, 9).fill({ color: Math.floor((y - padding) / 18) % 2 === 0 ? 0xffffff : 0x111827 });
     }
+    app.stage.addChild(finish);
 
-    const durationMs = 680;
-    setFlyingUid(uid);
-    onLaunch(finalCharge, finalAimOffset, durationMs);
-    throwTimerRef.current = window.setTimeout(() => {
-      setFlyingUid(null);
-    }, durationMs);
-  };
+    laneStates.forEach((lane, laneIndex) => {
+      const railIndex = laneIndex % 2;
+      const stackOffset = (Math.floor(laneIndex / 2) - 1) * 18;
+      const railY = railYs[railIndex];
+      const runnerX = startX + lane.displayProgress * Math.max(1, endX - startX);
+      const runnerY = railY + stackOffset + Math.sin(now / 115 + laneIndex) * (lane.isEliminated ? 1 : 5);
+      const activeLaneEvents = activeEvents.filter((event) => event.affectsAll || event.laneIndex === laneIndex);
+      const hasGreenTea = activeLaneEvents.some((event) => event.type === "green-tea");
+      const hasReverse = activeLaneEvents.some((event) => event.type === "reverse-belt");
+      const hasChopsticks = activeLaneEvents.some((event) => event.type === "chopsticks");
+      const layer = new Container();
+      layer.alpha = lane.isEliminated ? 0.55 : 1;
 
-  const handleCancel = (uid: string) => {
-    if (heldUid !== uid) {
-      return;
-    }
+      if (hasGreenTea) {
+        const spill = new Graphics();
+        spill.ellipse(runnerX + 10, railY + 32, 56, 13).fill({ color: 0x16a34a, alpha: 0.55 });
+        spill.ellipse(runnerX - 32, railY + 34, 22, 8).fill({ color: 0x86efac, alpha: 0.65 });
+        app.stage.addChild(spill);
+      }
 
-    resetHold();
-    onAimUpdate(0, false);
-  };
+      const shadow = new Graphics();
+      shadow.ellipse(runnerX, railY + 38, 34, 9).fill({ color: 0x000000, alpha: 0.24 });
+      layer.addChild(shadow);
+
+      const plateColor = Number(`0x${lane.color.replace("#", "")}`);
+      const plate = new Graphics();
+      plate.circle(runnerX, runnerY, 32).fill({ color: 0xffffff }).stroke({ color: plateColor, width: 3 });
+      layer.addChild(plate);
+
+      const menu = menuById.get(lane.menuId) ?? menuCards[0];
+      const texture = textureRef.current.get(menu.imageUrl);
+      if (texture) {
+        const mask = new Graphics().circle(runnerX, runnerY, 24).fill({ color: 0xffffff });
+        const sprite = new Sprite(texture);
+        sprite.anchor.set(0.5);
+        sprite.x = runnerX;
+        sprite.y = runnerY;
+        sprite.width = 50;
+        sprite.height = 50;
+        sprite.mask = mask;
+        layer.addChild(mask, sprite);
+      } else {
+        const fallback = new Text({
+          text: lane.icon,
+          style: { fontFamily: "Apple Color Emoji, Segoe UI Emoji", fontSize: 24 },
+        });
+        fallback.anchor.set(0.5);
+        fallback.x = runnerX;
+        fallback.y = runnerY;
+        layer.addChild(fallback);
+      }
+
+      const nameText = new Text({
+        text: lane.menuName,
+        style: {
+          fill: 0xffffff,
+          fontFamily: "Pretendard, Inter, sans-serif",
+          fontSize: width < 720 ? 11 : 13,
+          fontWeight: "900",
+          stroke: { color: 0x111827, width: 3 },
+        },
+      });
+      nameText.anchor.set(0.5);
+      nameText.x = runnerX;
+      nameText.y = runnerY + 45;
+      layer.addChild(nameText);
+
+      if (hasReverse) {
+        const sweat = new Text({
+          text: "💦",
+          style: { fontFamily: "Apple Color Emoji, Segoe UI Emoji", fontSize: 22 },
+        });
+        sweat.x = runnerX + 30;
+        sweat.y = runnerY - 48;
+        layer.addChild(sweat);
+      }
+
+      if (hasChopsticks) {
+        const chopsticks = new Graphics();
+        chopsticks.moveTo(runnerX - 18, runnerY - 90).lineTo(runnerX - 6, runnerY - 13).stroke({ color: 0xa16207, width: 7, cap: "round" });
+        chopsticks.moveTo(runnerX + 18, runnerY - 90).lineTo(runnerX + 6, runnerY - 13).stroke({ color: 0xa16207, width: 7, cap: "round" });
+        layer.addChild(chopsticks);
+      }
+
+      if (lane.isEliminated) {
+        const badge = new Graphics();
+        badge.roundRect(runnerX - 26, runnerY - 54, 52, 26, 13).fill({ color: 0x991b1b, alpha: 0.96 });
+        const eliminated = new Text({
+          text: "탈락",
+          style: { fill: 0xffffff, fontFamily: "Pretendard, Inter, sans-serif", fontSize: 13, fontWeight: "900" },
+        });
+        eliminated.anchor.set(0.5);
+        eliminated.x = runnerX;
+        eliminated.y = runnerY - 41;
+        layer.addChild(badge, eliminated);
+      }
+
+      if (lane.isFinished) {
+        const flag = new Text({
+          text: "🏁",
+          style: { fontFamily: "Apple Color Emoji, Segoe UI Emoji", fontSize: 24 },
+        });
+        flag.anchor.set(0.5);
+        flag.x = runnerX + 44;
+        flag.y = runnerY - 20;
+        layer.addChild(flag);
+      }
+
+      app.stage.addChild(layer);
+    });
+  }, [activeEvents, assetTick, laneStates, now]);
 
   return (
-    <section className="dart-rack" aria-label="Dart players">
-      <div className="dart-rack-head">
-        <span>룰렛 플레이어</span>
-        <strong>{room.players[room.hostUid]?.nickname ?? "host"}</strong>
+    <section className="race-canvas-shell" aria-label="Sushi race track">
+      <div className="race-pixi-host" ref={hostRef} />
+      <div className="sr-only">
+        {laneStates.map((lane) => `${lane.rank}위 ${lane.menuName} ${lane.isEliminated ? "탈락" : formatRaceTime(lane.finishMs)}`).join(", ")}
       </div>
-      <div className="dart-speed-meter" aria-hidden="true">
-        <span>투척 가능 시간</span>
-        <strong>
-          {(THROW_WINDOW_START_MS / 1000).toFixed(0)} - {(THROW_WINDOW_END_MS / 1000).toFixed(0)}초
-        </strong>
-        <em>{currentSpeed.toFixed(2)}</em>
-      </div>
-      <div className="dart-grid">
-        {Object.entries(room.players).map(([uid, player]) => {
-          const isCurrent = uid === currentUid;
-          const isHost = uid === room.hostUid;
-          const isHeld = heldUid === uid;
-          const isFlying = flyingUid === uid;
-          const isThrown = Boolean(room.throws?.[uid]);
-          const disabled = !isCurrent || !spinReady || isThrown || Boolean(flyingUid);
-          const chargePower =
-            isHeld && holdRef.current ? getChargePower(holdRef.current.startedAt) : isFlying ? 1 : 0;
-          const visibleAimOffset = isHeld ? aimOffset : 0;
-
-          return (
-            <article
-              className={`dart-card${isCurrent ? " is-own" : ""}${isHost ? " is-host" : ""}${isHeld ? " is-held" : ""}${isFlying ? " is-flying" : ""}${isThrown ? " is-thrown" : ""}`}
-              key={uid}
-              style={
-                {
-                  "--throw-charge": chargePower.toFixed(2),
-                  "--aim-offset": visibleAimOffset.toFixed(3),
-                } as CSSProperties
-              }
-            >
-              <button
-                aria-label={`${player.nickname} dart`}
-                className="dart-handle"
-                disabled={disabled}
-                onPointerCancel={() => handleCancel(uid)}
-                onPointerDown={(event) => handlePointerDown(uid, event)}
-                onPointerMove={(event) => handlePointerMove(uid, event)}
-                onPointerUp={(event) => handleRelease(uid, event)}
-                type="button"
-              >
-                <span className="dart-piece" aria-hidden="true">
-                  <span className="dart-tip" />
-                  <span className="dart-body" />
-                  <span className="dart-fin top" />
-                  <span className="dart-fin bottom" />
-                </span>
-              </button>
-              <div className="dart-gauge" aria-hidden="true">
-                <span style={{ "--gauge-fill": `${Math.round(chargePower * 100)}%` } as CSSProperties} />
-              </div>
-              <span className="dart-name">{player.nickname}</span>
-              <span className="dart-role">{isHost ? "룰렛 + 다트" : "다트"}</span>
-              {isCurrent && !spinReady && <span className="dart-hint">룰렛 시작 대기</span>}
-              {isCurrent && spinReady && !isThrown && !isFlying && !throwWindowOpen && (
-                <span className="dart-hint">룰렛이 충분히 느려질 때까지 대기</span>
-              )}
-              {isCurrent && spinReady && !isThrown && !isFlying && throwWindowOpen && (
-                <span className="dart-hint">좌클릭 홀드로 게이지 조절 후 놓기</span>
-              )}
-              {isThrown && <span className="dart-hint">투척 완료</span>}
-            </article>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
-function MenuPreview() {
-  const featured = useMemo(() => menuCards.slice(0, 6), []);
-
-  return (
-    <section className="menu-strip">
-      {featured.map((menu) => (
-        <article className="menu-tile" key={menu.id}>
-          <MenuImage menu={menu} variant="food" />
-          <span>{menu.name}</span>
-        </article>
-      ))}
     </section>
   );
 }
 
 type ResultViewProps = {
   isHost: boolean;
-  menu: MenuCard;
   room: RoomState;
   roomCode: string;
   onReset: () => void;
 };
 
-function ResultView({ isHost, menu, room, roomCode, onReset }: ResultViewProps) {
-  const displayName = getMenuDisplayName(menu);
-  const shareText = `오늘 점심은 ${displayName} (${roomCode})`;
-  const rankings = room.result?.rankings ?? [];
+function ResultView({ isHost, room, roomCode, onReset }: ResultViewProps) {
+  const result = room.result;
+  const winnerMenu = menuById.get(result?.menuId ?? "") ?? menuCards[0];
+  const winnerRacer = getRacerForMenu(winnerMenu.id);
+  const rankings = result?.raceRankings ?? [];
+  const shareText = `오늘 점심 우승: ${getMenuDisplayName(winnerMenu)} (${roomCode})`;
 
   const copyResult = async () => {
     await navigator.clipboard.writeText(`${shareText}\n${window.location.href}`);
@@ -1218,37 +1300,25 @@ function ResultView({ isHost, menu, room, roomCode, onReset }: ResultViewProps) 
 
   return (
     <section className="result-layout">
-      <article className="result-menu-card">
-        <MenuImage menu={menu} variant="card" />
-        <div className="result-map-overlay">
-          <span>근처 맛집 위치</span>
-          <strong>{displayName}</strong>
-          <i />
+      <article className="result-winner-card" style={{ "--winner-color": winnerRacer.color } as CSSProperties}>
+        <div className="winner-image-wrap">
+          <MenuImage menu={winnerMenu} variant="winner" />
+          <span>{winnerRacer.icon}</span>
         </div>
-        <div className="result-map-note">
-          <span>추천 후보</span>
-          <strong>반경 800m · 임시 지도</strong>
-        </div>
-        <div className="result-bot" aria-hidden="true">
-          <span className="bot-head">
-            <i />
-          </span>
-          <span className="bot-body" />
-        </div>
+        <p className="status-label">우승 메뉴</p>
+        <h2>{getMenuDisplayName(winnerMenu)}</h2>
+        <strong>{result?.characterName ?? winnerRacer.characterName}</strong>
+        <em>{result?.finishMs ? formatRaceTime(result.finishMs) : ""}</em>
       </article>
+
       <section className="panel result-detail">
-        <span className="status-label">가장 정확한 다트 결과</span>
-        <h2>{room.result?.winnerNickname}</h2>
-        <p>
-          {displayName} · 오차 {formatError(room.result?.errorDeg ?? 0)}
-        </p>
         <div className="result-rankings">
           {rankings.map((entry) => (
-            <article className="result-rank-row" key={`${entry.uid}-${entry.throwAt}`}>
+            <article className="result-rank-row" key={entry.menuId}>
               <strong>{entry.rank}</strong>
-              <span>{entry.nickname}</span>
-              <span>{getMenuDisplayName(menuById.get(entry.menuId))}</span>
-              <em>{formatError(entry.errorDeg)}</em>
+              <span>{entry.menuName}</span>
+              <span>{entry.characterName}</span>
+              <em>{formatRaceTime(entry.finishMs)}</em>
             </article>
           ))}
         </div>
@@ -1267,7 +1337,7 @@ function ResultView({ isHost, menu, room, roomCode, onReset }: ResultViewProps) 
   );
 }
 
-function MenuImage({ menu, variant = "card" }: { menu: MenuCard; variant?: "card" | "food" }) {
+function MenuImage({ menu, variant = "thumb" }: { menu: MenuCard; variant?: "preview" | "thumb" | "runner" | "winner" }) {
   const [src, setSrc] = useState(menu.imageUrl);
 
   useEffect(() => {
@@ -1290,4 +1360,3 @@ function MenuImage({ menu, variant = "card" }: { menu: MenuCard; variant?: "card
 }
 
 export default App;
-
