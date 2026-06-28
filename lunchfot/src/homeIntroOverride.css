@@ -29,9 +29,7 @@
   display: block;
 }
 
-.home-screen.home-screen--legacy .home-title,
-.home-screen .game-picker,
-.home-screen .join-play-button {
+.home-screen.home-screen--legacy .home-title {
   display: none !important;
 }
 
@@ -41,7 +39,26 @@
   width: 100%;
 }
 
+.home-screen .game-picker {
+  display: grid;
+  gap: 8px;
+  margin: -2px 0 2px 26px;
+}
+
+.home-screen .game-option {
+  min-height: 48px;
+  font-size: 20px;
+  opacity: 0.64;
+}
+
+.home-screen .game-option.is-live {
+  border-left-color: #facc15;
+  background: rgba(8, 92, 82, 0.62);
+  opacity: 1;
+}
+
 .home-screen .join-code-holder {
+  position: relative;
   width: 100%;
 }
 
@@ -79,6 +96,7 @@
 }
 
 .home-screen .home-code-input {
+  padding-right: 66px;
   text-transform: uppercase;
 }
 
@@ -91,6 +109,38 @@
 
 .home-screen .home-code-input::placeholder {
   color: rgba(255, 248, 220, 0.78);
+}
+
+.home-screen .join-play-button {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  padding: 0;
+  color: #fff8dc;
+  background: #0f766e;
+  box-shadow: 0 8px 18px rgba(15, 118, 110, 0.28);
+  font-size: 18px;
+  line-height: 1;
+  text-align: center;
+}
+
+.home-screen .join-play-button:hover {
+  border-left-color: transparent;
+  background: #0f766e;
+  transform: none;
+}
+
+.home-screen .join-play-button:disabled {
+  color: rgba(255, 248, 220, 0.6);
+  background: rgba(15, 23, 42, 0.36);
+  box-shadow: none;
 }
 
 @media (max-width: 760px) {

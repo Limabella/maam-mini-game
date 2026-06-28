@@ -5,6 +5,8 @@ import {
   useState,
   type CSSProperties,
 } from "react";
+import { Application, Assets, Container, Graphics, Sprite, Text, Texture } from "pixi.js";
+import AssetLab from "./AssetLab";
 import { menuById, menuCards } from "./data/menuCards";
 import { getMenuDisplayName, getRacerForMenu } from "./data/sushiRacers";
 import { createInitialSoundEnabled, useArcadeAudio, type ArcadeAudio } from "./game/audio";
@@ -72,6 +74,15 @@ const navigateToHome = (setRoomCode: (code: string) => void) => {
 const playerCount = (room: RoomState | null) => Object.keys(room?.players ?? {}).length;
 
 const getVoteCount = (room: RoomState, uid: string) => room.votes?.[uid]?.menuIds.length ?? 0;
+
+const getAssetStem = (menu: MenuCard) => {
+  const match = menu.imageUrl.match(/\/([^/]+)\.png$/);
+  return match?.[1] ?? menu.id.replace("-lm", "");
+};
+
+const getFoodImageUrl = (menu: MenuCard) => `/food/food_${getAssetStem(menu)}.png`;
+
+const getRunnerImageUrl = (menu: MenuCard) => `/hero/runner_${getAssetStem(menu)}.png`;
 
 type GamePhaseId = "sushi" | "pending" | "dart";
 
@@ -201,14 +212,23 @@ function App() {
   }
 
   const currentPlayer = room?.players?.[store.uid] ?? null;
+  const appShellClassName = [
+    "app-shell",
+    !roomCode ? "is-home" : "",
+    room?.status === "lobby" ? "is-vote-lobby" : "",
+    room?.status === "countdown" ? "is-countdown-screen" : "",
+    room?.status === "result" ? "is-result-screen" : "",
+    room?.status === "playing" ? "is-race-playing" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
-    <main className={`app-shell${!roomCode ? " is-home" : ""}`}>
+    <main className={appShellClassName}>
+      <button className="fixed-brand-logo" type="button" aria-label="LunchFot home" onClick={() => navigateToHome(setRoomCode)}>
+        <img src="/other/lunchfot-icon-cutout.png" alt="LunchFot" />
+      </button>
       <header className="topbar">
-        <button className="brand" type="button" onClick={() => navigateToHome(setRoomCode)}>
-          <span className="brand-mark">LF</span>
-          <span>LunchFot</span>
-        </button>
         <div className="topbar-tools">
           <button
             className={`icon-button sound-toggle${soundEnabled ? " is-on" : ""}`}
@@ -264,6 +284,7 @@ type HomeScreenProps = {
 function HomeScreen({ busy, message, onCreateRoom, onJoinRoom }: HomeScreenProps) {
   const [joinCode, setJoinCode] = useState("");
   const [homeMode, setHomeMode] = useState<"idle" | "games" | "join">("idle");
+  const [assetLabOpen, setAssetLabOpen] = useState(false);
 
   const requestJoin = () => {
     if (joinCode.length === 4) {
@@ -275,7 +296,17 @@ function HomeScreen({ busy, message, onCreateRoom, onJoinRoom }: HomeScreenProps
   };
 
   return (
+    <>
     <section className="home-screen">
+      <button
+        className="home-settings-button"
+        type="button"
+        aria-label="Asset Lab"
+        title="Asset Lab"
+        onClick={() => setAssetLabOpen(true)}
+      >
+        ⚙
+      </button>
       <div className="home-content">
         <div className="home-title" aria-label="Lunch Fot">
           <span className="home-mark">
@@ -312,6 +343,7 @@ function HomeScreen({ busy, message, onCreateRoom, onJoinRoom }: HomeScreenProps
           <button type="button" disabled={busy} onClick={() => setHomeMode("join")}>
             {"\ubc29 \uc785\uc7a5"}
           </button>
+
         </div>
 
         {homeMode === "join" && (
@@ -342,6 +374,18 @@ function HomeScreen({ busy, message, onCreateRoom, onJoinRoom }: HomeScreenProps
         {message && <p className="form-message home-message">{message}</p>}
       </div>
     </section>
+    {assetLabOpen && (
+      <div className="asset-modal" role="dialog" aria-modal="true" aria-label="Character Motion Lab">
+        <div className="asset-modal__backdrop" onClick={() => setAssetLabOpen(false)} />
+        <section className="asset-modal__panel">
+          <button className="asset-modal__close" type="button" aria-label="Close Asset Lab" onClick={() => setAssetLabOpen(false)}>
+            ×
+          </button>
+          <AssetLab embedded />
+        </section>
+      </div>
+    )}
+    </>
   );
 }
 
@@ -439,9 +483,8 @@ function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRo
 
   if (room.status === "countdown") {
     return (
-      <section className="stage countdown-stage">
-        <RoomSummary room={room} roomCode={roomCode} />
-        <FinalistStrip finalistIds={finalistIds} />
+      <section className="countdown-stage">
+        <img className="countdown-logo" src="/hero/maam-food-logo.png" alt="MaAM Food" />
         <div className="countdown-number">{countdownLeft || "GO"}</div>
       </section>
     );
@@ -450,26 +493,25 @@ function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRo
   if (room.status === "playing") {
     return (
       <section className="stage race-stage">
-        <RoomSummary room={room} roomCode={roomCode} />
-        <RaceScoreboard room={room} now={now} />
-        <SushiRaceTrack room={room} now={now} />
+        <PixiSushiRaceTrack room={room} now={now} />
       </section>
     );
   }
 
   if (room.status === "result" && room.result) {
     return (
-      <section className="stage">
-        <RoomSummary room={room} roomCode={roomCode} />
-        <ResultView isHost={isHost} room={room} roomCode={roomCode} onReset={handleReset} />
+      <section className="stage result-stage">
+        <ResultView room={room} />
       </section>
     );
   }
 
   return (
     <section className="stage lobby-stage">
-      <RoomSummary room={room} roomCode={roomCode} />
-      <PlayerList room={room} />
+      <div className="lobby-info-row">
+        <RoomSummary room={room} roomCode={roomCode} />
+        <PlayerList room={room} />
+      </div>
       <VoteBoard
         currentUid={currentUid}
         isHost={isHost}
@@ -551,7 +593,6 @@ function VoteBoard({ currentUid, isHost, nickname, room, roomCode, store, onStar
   const [draftVotes, setDraftVotes] = useState(savedVotes);
   const tallies = useMemo(() => getVoteTallies(room), [room]);
   const tallyByMenuId = useMemo(() => new Map(tallies.map((entry) => [entry.menuId, entry.votes])), [tallies]);
-  const finalists = useMemo(() => selectFinalists(room), [room]);
   const hasAnyVote = tallies.some((entry) => entry.votes > 0);
 
   useEffect(() => {
@@ -588,13 +629,14 @@ function VoteBoard({ currentUid, isHost, nickname, room, roomCode, store, onStar
         </strong>
       </div>
 
-      <div className="finalist-preview" aria-label="Projected finalists">
-        {finalists.map((menuId) => {
+      <div className={`finalist-preview${draftVotes.length ? " has-selections" : ""}`} aria-label="Selected menus">
+        {draftVotes.map((menuId, index) => {
           const menu = menuById.get(menuId);
           const racer = getRacerForMenu(menuId);
 
           return (
             <article className="finalist-chip" key={menuId} style={{ "--chip-color": racer.color } as CSSProperties}>
+              <span className="finalist-chip__index">{index + 1}</span>
               {menu && <MenuImage menu={menu} variant="preview" />}
               <strong>{getMenuDisplayName(menu)}</strong>
             </article>
@@ -995,57 +1037,301 @@ function SushiRaceTrack({ room, now }: SushiRaceTrackProps) {
   );
 }
 
-type ResultViewProps = {
-  isHost: boolean;
-  room: RoomState;
-  roomCode: string;
-  onReset: () => void;
-};
+function PixiSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const appRef = useRef<Application | null>(null);
+  const readyRef = useRef(false);
+  const textureRef = useRef<Map<string, Texture>>(new Map());
+  const [assetTick, setAssetTick] = useState(0);
+  const laneStates = getRaceLaneStates(room, now);
+  const activeEvents = getActiveRaceEvents(room, now);
+  const menuIds = laneStates.map((lane) => lane.menuId).join("|");
 
-function ResultView({ isHost, room, roomCode, onReset }: ResultViewProps) {
-  const result = room.result;
-  const winnerMenu = menuById.get(result?.menuId ?? "") ?? menuCards[0];
-  const winnerRacer = getRacerForMenu(winnerMenu.id);
-  const rankings = result?.raceRankings ?? [];
-  const shareText = `오늘 점심 우승: ${getMenuDisplayName(winnerMenu)} (${roomCode})`;
+  useEffect(() => {
+    let cancelled = false;
+    const host = hostRef.current;
+    if (!host || appRef.current) {
+      return;
+    }
 
-  const copyResult = async () => {
-    await navigator.clipboard.writeText(`${shareText}\n${window.location.href}`);
-  };
+    const app = new Application();
+    app
+      .init({
+        antialias: true,
+        autoDensity: true,
+        backgroundAlpha: 0,
+        height: Math.max(420, Math.round(host.getBoundingClientRect().height)),
+        resolution: window.devicePixelRatio || 1,
+        width: Math.max(320, Math.round(host.getBoundingClientRect().width)),
+      })
+      .then(() => {
+        if (cancelled) {
+          app.destroy(true);
+          return;
+        }
+
+        appRef.current = app;
+        host.appendChild(app.canvas);
+        readyRef.current = true;
+        setAssetTick((tick) => tick + 1);
+      })
+      .catch(console.error);
+
+    return () => {
+      cancelled = true;
+      readyRef.current = false;
+      appRef.current?.destroy(true);
+      appRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const assetUrls = laneStates.map((lane) => menuById.get(lane.menuId)?.imageUrl ?? menuCards[0].imageUrl);
+
+    assetUrls.forEach((url) => {
+      if (textureRef.current.has(url)) {
+        return;
+      }
+
+      Assets.load<Texture>(url)
+        .then((texture) => {
+          if (!cancelled) {
+            textureRef.current.set(url, texture);
+            setAssetTick((tick) => tick + 1);
+          }
+        })
+        .catch(console.error);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [laneStates, menuIds]);
+
+  useEffect(() => {
+    const app = appRef.current;
+    const host = hostRef.current;
+    if (!app || !host || !readyRef.current) {
+      return;
+    }
+
+    const width = Math.max(320, Math.round(host.getBoundingClientRect().width));
+    const height = Math.max(420, Math.round(host.getBoundingClientRect().height));
+    if (app.renderer.width !== width || app.renderer.height !== height) {
+      app.renderer.resize(width, height);
+    }
+
+    app.stage.removeChildren();
+
+    const padding = width < 720 ? 16 : 28;
+    const labelWidth = width < 720 ? 86 : 124;
+    const trackX = padding + labelWidth;
+    const finishX = width - padding - 34;
+    const startX = trackX + 24;
+    const endX = finishX - 34;
+    const railYs = [height * 0.42, height * 0.68];
+    const railHeight = width < 720 ? 82 : 100;
+    const beltOffset = (now / 13) % 72;
+
+    railYs.forEach((railY, railIndex) => {
+      const rail = new Graphics();
+      rail
+        .roundRect(trackX - 18, railY - railHeight / 2, finishX - trackX + 34, railHeight, railHeight / 2)
+        .fill({ color: railIndex === 0 ? 0x6b3f1f : 0x3d2414, alpha: 0.78 })
+        .stroke({ color: 0xffd08a, alpha: 0.4, width: 2 });
+      app.stage.addChild(rail);
+
+      const rollers = new Graphics();
+      for (let x = trackX - 72; x < finishX + 52; x += 36) {
+        const rollerX = x + beltOffset;
+        rollers.circle(rollerX, railY, 7).fill({ color: 0xfff7df, alpha: 0.72 });
+        rollers.rect(rollerX + 13, railY - railHeight / 2 + 9, 5, railHeight - 18).fill({ color: 0x1f130d, alpha: 0.28 });
+      }
+      app.stage.addChild(rollers);
+
+      const laneTag = new Text({
+        text: `${railIndex + 1} 레일`,
+        style: { fill: 0xffffff, fontFamily: "Pretendard, Inter, sans-serif", fontSize: 13, fontWeight: "900" },
+      });
+      laneTag.x = padding;
+      laneTag.y = railY - 10;
+      app.stage.addChild(laneTag);
+    });
+
+    const finish = new Graphics();
+    finish.roundRect(finishX, padding, 16, height - padding * 2, 4).fill({ color: 0x111827, alpha: 0.94 });
+    for (let y = padding; y < height - padding; y += 18) {
+      finish.rect(finishX, y, 16, 9).fill({ color: Math.floor((y - padding) / 18) % 2 === 0 ? 0xffffff : 0x111827 });
+    }
+    app.stage.addChild(finish);
+
+    laneStates.forEach((lane, laneIndex) => {
+      const railIndex = laneIndex % 2;
+      const stackOffset = (Math.floor(laneIndex / 2) - 1) * 18;
+      const railY = railYs[railIndex];
+      const runnerX = startX + lane.displayProgress * Math.max(1, endX - startX);
+      const runnerY = railY + stackOffset + Math.sin(now / 115 + laneIndex) * (lane.isEliminated ? 1 : 5);
+      const activeLaneEvents = activeEvents.filter((event) => event.affectsAll || event.laneIndex === laneIndex);
+      const hasGreenTea = activeLaneEvents.some((event) => event.type === "green-tea");
+      const hasReverse = activeLaneEvents.some((event) => event.type === "reverse-belt");
+      const hasChopsticks = activeLaneEvents.some((event) => event.type === "chopsticks");
+      const layer = new Container();
+      layer.alpha = lane.isEliminated ? 0.55 : 1;
+
+      if (hasGreenTea) {
+        const spill = new Graphics();
+        spill.ellipse(runnerX + 10, railY + 32, 56, 13).fill({ color: 0x16a34a, alpha: 0.55 });
+        spill.ellipse(runnerX - 32, railY + 34, 22, 8).fill({ color: 0x86efac, alpha: 0.65 });
+        app.stage.addChild(spill);
+      }
+
+      const shadow = new Graphics();
+      shadow.ellipse(runnerX, railY + 38, 34, 9).fill({ color: 0x000000, alpha: 0.24 });
+      layer.addChild(shadow);
+
+      const plateColor = Number(`0x${lane.color.replace("#", "")}`);
+      const plate = new Graphics();
+      plate.circle(runnerX, runnerY, 32).fill({ color: 0xffffff }).stroke({ color: plateColor, width: 3 });
+      layer.addChild(plate);
+
+      const menu = menuById.get(lane.menuId) ?? menuCards[0];
+      const texture = textureRef.current.get(menu.imageUrl);
+      if (texture) {
+        const mask = new Graphics().circle(runnerX, runnerY, 24).fill({ color: 0xffffff });
+        const sprite = new Sprite(texture);
+        sprite.anchor.set(0.5);
+        sprite.x = runnerX;
+        sprite.y = runnerY;
+        sprite.width = 50;
+        sprite.height = 50;
+        sprite.mask = mask;
+        layer.addChild(mask, sprite);
+      } else {
+        const fallback = new Text({
+          text: lane.icon,
+          style: { fontFamily: "Apple Color Emoji, Segoe UI Emoji", fontSize: 24 },
+        });
+        fallback.anchor.set(0.5);
+        fallback.x = runnerX;
+        fallback.y = runnerY;
+        layer.addChild(fallback);
+      }
+
+      const nameText = new Text({
+        text: lane.menuName,
+        style: {
+          fill: 0xffffff,
+          fontFamily: "Pretendard, Inter, sans-serif",
+          fontSize: width < 720 ? 11 : 13,
+          fontWeight: "900",
+          stroke: { color: 0x111827, width: 3 },
+        },
+      });
+      nameText.anchor.set(0.5);
+      nameText.x = runnerX;
+      nameText.y = runnerY + 45;
+      layer.addChild(nameText);
+
+      if (hasReverse) {
+        const sweat = new Text({
+          text: "💦",
+          style: { fontFamily: "Apple Color Emoji, Segoe UI Emoji", fontSize: 22 },
+        });
+        sweat.x = runnerX + 30;
+        sweat.y = runnerY - 48;
+        layer.addChild(sweat);
+      }
+
+      if (hasChopsticks) {
+        const chopsticks = new Graphics();
+        chopsticks.moveTo(runnerX - 18, runnerY - 90).lineTo(runnerX - 6, runnerY - 13).stroke({ color: 0xa16207, width: 7, cap: "round" });
+        chopsticks.moveTo(runnerX + 18, runnerY - 90).lineTo(runnerX + 6, runnerY - 13).stroke({ color: 0xa16207, width: 7, cap: "round" });
+        layer.addChild(chopsticks);
+      }
+
+      if (lane.isEliminated) {
+        const badge = new Graphics();
+        badge.roundRect(runnerX - 26, runnerY - 54, 52, 26, 13).fill({ color: 0x991b1b, alpha: 0.96 });
+        const eliminated = new Text({
+          text: "탈락",
+          style: { fill: 0xffffff, fontFamily: "Pretendard, Inter, sans-serif", fontSize: 13, fontWeight: "900" },
+        });
+        eliminated.anchor.set(0.5);
+        eliminated.x = runnerX;
+        eliminated.y = runnerY - 41;
+        layer.addChild(badge, eliminated);
+      }
+
+      if (lane.isFinished) {
+        const flag = new Text({
+          text: "🏁",
+          style: { fontFamily: "Apple Color Emoji, Segoe UI Emoji", fontSize: 24 },
+        });
+        flag.anchor.set(0.5);
+        flag.x = runnerX + 44;
+        flag.y = runnerY - 20;
+        layer.addChild(flag);
+      }
+
+      app.stage.addChild(layer);
+    });
+  }, [activeEvents, assetTick, laneStates, now]);
 
   return (
-    <section className="result-layout">
-      <article className="result-winner-card" style={{ "--winner-color": winnerRacer.color } as CSSProperties}>
-        <div className="winner-image-wrap">
-          <MenuImage menu={winnerMenu} variant="winner" />
-          <span>{winnerRacer.icon}</span>
-        </div>
-        <p className="status-label">우승 메뉴</p>
-        <h2>{getMenuDisplayName(winnerMenu)}</h2>
-        <strong>{result?.characterName ?? winnerRacer.characterName}</strong>
-        <em>{result?.finishMs ? formatRaceTime(result.finishMs) : ""}</em>
+    <section className="race-canvas-shell" aria-label="Sushi race track">
+      <div className="race-pixi-host" ref={hostRef} />
+      <div className="sr-only">
+        {laneStates.map((lane) => `${lane.rank}위 ${lane.menuName} ${lane.isEliminated ? "탈락" : formatRaceTime(lane.finishMs)}`).join(", ")}
+      </div>
+    </section>
+  );
+}
+
+type ResultViewProps = {
+  room: RoomState;
+};
+
+function ResultView({ room }: ResultViewProps) {
+  const result = room.result;
+  const winnerMenu = menuById.get(result?.menuId ?? "") ?? menuCards[0];
+  const rankings = result?.raceRankings ?? [];
+  const votersByMenuId = useMemo(() => {
+    const voters = new Map<string, string[]>();
+
+    Object.values(room.votes ?? {}).forEach((entry) => {
+      entry.menuIds.forEach((menuId) => {
+        const next = voters.get(menuId) ?? [];
+        next.push(entry.nickname);
+        voters.set(menuId, next);
+      });
+    });
+
+    return voters;
+  }, [room.votes]);
+
+  return (
+    <section className="result-popup">
+      <article className="result-popup__image">
+        <MenuImage menu={winnerMenu} variant="winner" />
       </article>
 
-      <section className="panel result-detail">
+      <section className="result-popup__rank-panel" aria-label="Race rankings">
         <div className="result-rankings">
+          <article className="result-rank-row result-rank-row--head">
+            <strong>순위</strong>
+            <span>음식명</span>
+            <em>걸린시간</em>
+            <span>선택사용자이름</span>
+          </article>
           {rankings.map((entry) => (
             <article className="result-rank-row" key={entry.menuId}>
               <strong>{entry.rank}</strong>
               <span>{entry.menuName}</span>
-              <span>{entry.characterName}</span>
               <em>{formatRaceTime(entry.finishMs)}</em>
+              <span>{votersByMenuId.get(entry.menuId)?.join(", ") || "-"}</span>
             </article>
           ))}
-        </div>
-        <div className="result-actions">
-          <button className="secondary-button" type="button" onClick={copyResult}>
-            결과 공유
-          </button>
-          {isHost && (
-            <button className="ghost-button" type="button" onClick={onReset}>
-              다시 하기
-            </button>
-          )}
         </div>
       </section>
     </section>
@@ -1053,11 +1339,12 @@ function ResultView({ isHost, room, roomCode, onReset }: ResultViewProps) {
 }
 
 function MenuImage({ menu, variant = "thumb" }: { menu: MenuCard; variant?: "preview" | "thumb" | "runner" | "winner" }) {
-  const [src, setSrc] = useState(menu.imageUrl);
+  const primarySrc = variant === "preview" || variant === "thumb" ? getFoodImageUrl(menu) : menu.imageUrl;
+  const [src, setSrc] = useState(primarySrc);
 
   useEffect(() => {
-    setSrc(menu.imageUrl);
-  }, [menu.imageUrl]);
+    setSrc(primarySrc);
+  }, [primarySrc]);
 
   return (
     <span className={`menu-image menu-image--${variant}`}>
@@ -1075,3 +1362,4 @@ function MenuImage({ menu, variant = "thumb" }: { menu: MenuCard; variant?: "pre
 }
 
 export default App;
+
