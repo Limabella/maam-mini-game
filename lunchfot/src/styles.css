@@ -1168,6 +1168,10 @@ input:focus {
   box-shadow: none;
 }
 
+.race-canvas-shell--3d {
+  min-height: 100vh;
+}
+
 .race-canvas {
   display: block;
   width: 100%;
@@ -1183,6 +1187,83 @@ input:focus {
   display: block;
   width: 100%;
   height: 100%;
+}
+
+.race-three-host {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100vh;
+}
+
+.race-three-host canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.race-rail-stage {
+  position: absolute;
+  left: 50%;
+  top: 61%;
+  z-index: 1;
+  width: min(86vw, 1460px);
+  height: min(48vw, 48vh);
+  min-height: 320px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.race-rail-object {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: clamp(70px, 7vw, 116px);
+  overflow: hidden;
+  border-radius: 999px;
+  background-image: url("/other/rail_lane_tile.png");
+  background-repeat: repeat-x;
+  background-size: auto 100%;
+  box-shadow:
+    0 16px 30px rgba(23, 13, 5, 0.42),
+    inset 0 2px 0 rgba(255, 244, 214, 0.65),
+    inset 0 -7px 10px rgba(66, 36, 8, 0.42);
+  animation: race-rail-flow 1.45s linear infinite;
+}
+
+.race-rail-object--top {
+  top: 10%;
+}
+
+.race-rail-object--bottom {
+  bottom: 10%;
+}
+
+.race-rail-object.is-reversed {
+  animation-direction: reverse;
+}
+
+.race-finish-mascot {
+  position: absolute;
+  right: -4%;
+  top: 50%;
+  z-index: 3;
+  width: clamp(210px, 18vw, 340px);
+  aspect-ratio: 3 / 2;
+  transform: translateY(-52%);
+  background: url("/other/finish_ntr_flag.png") center / contain no-repeat;
+  filter: drop-shadow(0 16px 24px rgba(18, 10, 4, 0.5));
+}
+
+@keyframes race-rail-flow {
+  from {
+    background-position-x: 0;
+  }
+
+  to {
+    background-position-x: 1230px;
+  }
 }
 
 .sr-only {

@@ -5,7 +5,10 @@ import {
   useState,
   type CSSProperties,
 } from "react";
+import * as THREE from "three";
 import { Application, Assets, Container, Graphics, Sprite, Text, Texture } from "pixi.js";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 import AssetLab from "./AssetLab";
 import { menuById, menuCards } from "./data/menuCards";
 import { getMenuDisplayName, getRacerForMenu } from "./data/sushiRacers";
@@ -93,7 +96,7 @@ const GAME_PHASES: Array<{
   label: string;
   enabled: boolean;
 }> = [
-  { id: "sushi", label: "\ud68c\uc804 \ucd08\ubc25 \uac8c\uc784", enabled: true },
+  { id: "sushi", label: "\ud68c\uc804 \ucd08\ubc25 \ub808\uc774\uc2a4", enabled: true },
   { id: "pending", label: "\uc900\ube44\uc911", enabled: false },
   { id: "dart", label: "\ub2e4\ud2b8 \uac8c\uc784", enabled: false },
 ];
@@ -310,7 +313,7 @@ function HomeScreen({ busy, message, onCreateRoom, onJoinRoom }: HomeScreenProps
       <div className="home-content">
         <div className="home-title" aria-label="Lunch Fot">
           <span className="home-mark">
-            <img src="/hero/maam-food-logo.png" alt="MaAM Food" />
+            <img src="/other/maam-food-logo.png" alt="MaAM Food" />
           </span>
           <strong>Lunch Fot</strong>
         </div>
@@ -484,7 +487,7 @@ function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRo
   if (room.status === "countdown") {
     return (
       <section className="countdown-stage">
-        <img className="countdown-logo" src="/hero/maam-food-logo.png" alt="MaAM Food" />
+        <img className="countdown-logo" src="/other/maam-food-logo.png" alt="MaAM Food" />
         <div className="countdown-number">{countdownLeft || "GO"}</div>
       </section>
     );
@@ -493,7 +496,7 @@ function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRo
   if (room.status === "playing") {
     return (
       <section className="stage race-stage">
-        <PixiSushiRaceTrack room={room} now={now} />
+        <ThreeSushiRaceTrack room={room} now={now} />
       </section>
     );
   }
@@ -1030,6 +1033,269 @@ function SushiRaceTrack({ room, now }: SushiRaceTrackProps) {
   return (
     <section className="race-canvas-shell" aria-label="Sushi race track">
       <canvas className="race-canvas" ref={canvasRef} />
+      <div className="sr-only">
+        {laneStates.map((lane) => `${lane.rank}위 ${lane.menuName} ${lane.isEliminated ? "탈락" : formatRaceTime(lane.finishMs)}`).join(", ")}
+      </div>
+    </section>
+  );
+}
+
+function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.OrthographicCamera | null>(null);
+  const trackGroupRef = useRef<THREE.Group | null>(null);
+  const racerGroupRef = useRef<THREE.Group | null>(null);
+  const modelRef = useRef<THREE.Group | null>(null);
+  const animationClipsRef = useRef<THREE.AnimationClip[]>([]);
+  const animationMixersRef = useRef<THREE.AnimationMixer[]>([]);
+  const racerObjectsRef = useRef<
+    Map<
+      string,
+      {
+        laneIndex: number;
+        runner: THREE.Group;
+        shadow: THREE.Mesh;
+      }
+    >
+  >(new Map());
+  const [modelReady, setModelReady] = useState(0);
+  const laneStates = getRaceLaneStates(room, now);
+  const menuIds = laneStates.map((lane) => lane.menuId).join("|");
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) {
+      return;
+    }
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.OrthographicCamera(-5, 5, 2.8, -2.8, 0.1, 80);
+    camera.position.set(0, 4.1, 8.8);
+    camera.lookAt(0, 0.7, 0);
+
+    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.shadowMap.enabled = true;
+    host.appendChild(renderer.domElement);
+
+    const ambient = new THREE.HemisphereLight(0xfff4df, 0x1f2937, 2.2);
+    scene.add(ambient);
+    const key = new THREE.DirectionalLight(0xffedd5, 3.2);
+    key.position.set(-3.2, 7.2, 5.8);
+    key.castShadow = true;
+    scene.add(key);
+    const rim = new THREE.DirectionalLight(0x7dd3fc, 1.2);
+    rim.position.set(4.4, 3.6, -3.8);
+    scene.add(rim);
+
+    const trackGroup = new THREE.Group();
+    const racerGroup = new THREE.Group();
+    scene.add(trackGroup, racerGroup);
+
+    rendererRef.current = renderer;
+    sceneRef.current = scene;
+    cameraRef.current = camera;
+    trackGroupRef.current = trackGroup;
+    racerGroupRef.current = racerGroup;
+
+    let cancelled = false;
+    let frameId = 0;
+    let previousFrameTime = performance.now();
+    const renderFrame = (frameTime: number) => {
+      if (cancelled) {
+        return;
+      }
+
+      const delta = Math.min(0.05, Math.max(0, (frameTime - previousFrameTime) / 1000));
+      previousFrameTime = frameTime;
+      animationMixersRef.current.forEach((mixer) => mixer.update(delta));
+      renderer.render(scene, camera);
+      frameId = window.requestAnimationFrame(renderFrame);
+    };
+
+    new GLTFLoader().load(
+      "/3d_glb/001.glb",
+      (gltf) => {
+        if (cancelled) {
+          return;
+        }
+
+        const root = gltf.scene;
+        root.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+          }
+        });
+
+        const box = new THREE.Box3().setFromObject(root);
+        const size = new THREE.Vector3();
+        const center = new THREE.Vector3();
+        box.getSize(size);
+        box.getCenter(center);
+        const maxSize = Math.max(size.x, size.y, size.z) || 1;
+
+        const normalized = new THREE.Group();
+        root.position.set(-center.x, -box.min.y, -center.z);
+        normalized.add(root);
+        normalized.scale.setScalar(1 / maxSize);
+        modelRef.current = normalized;
+        animationClipsRef.current = gltf.animations[2] ? [gltf.animations[2]] : gltf.animations.slice(0, 1);
+        setModelReady((tick) => tick + 1);
+      },
+      undefined,
+      console.error,
+    );
+
+    frameId = window.requestAnimationFrame(renderFrame);
+
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frameId);
+      renderer.dispose();
+      host.removeChild(renderer.domElement);
+      rendererRef.current = null;
+      sceneRef.current = null;
+      cameraRef.current = null;
+      trackGroupRef.current = null;
+      racerGroupRef.current = null;
+      modelRef.current = null;
+      animationClipsRef.current = [];
+      animationMixersRef.current = [];
+      racerObjectsRef.current.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    const trackGroup = trackGroupRef.current;
+    const racerGroup = racerGroupRef.current;
+    const model = modelRef.current;
+
+    if (!host || !renderer || !scene || !camera || !trackGroup || !racerGroup || !model) {
+      return;
+    }
+
+    const width = Math.max(320, Math.round(host.getBoundingClientRect().width));
+    const height = Math.max(420, Math.round(host.getBoundingClientRect().height));
+    renderer.setSize(width, height, false);
+    const aspect = width / height;
+    const viewHeight = 5.6;
+    camera.left = (-viewHeight * aspect) / 2;
+    camera.right = (viewHeight * aspect) / 2;
+    camera.top = viewHeight / 2;
+    camera.bottom = -viewHeight / 2;
+    camera.updateProjectionMatrix();
+
+    trackGroup.clear();
+    racerGroup.clear();
+    animationMixersRef.current = [];
+    racerObjectsRef.current.clear();
+
+    const shadowMaterial = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.22 });
+
+    const startX = -3.55;
+    const endX = 3.55;
+    const railZs = [-1.72, 1.86];
+    const railYOffsets = [0.18, 0];
+
+    laneStates.forEach((lane, laneIndex) => {
+      const railIndex = laneIndex % 2;
+      const stackOffset = (Math.floor(laneIndex / 2) - 1) * 0.18;
+      const x = startX + lane.displayProgress * Math.max(1, endX - startX);
+      const z = railZs[railIndex] + stackOffset;
+      const bob = lane.isEliminated ? 0 : Math.sin(now / 115 + laneIndex) * 0.055;
+      const runner = cloneSkeleton(model) as THREE.Group;
+      runner.scale.multiplyScalar(width < 760 ? 0.92 : 1.12);
+      runner.position.set(x, 0.16 + railYOffsets[railIndex] + bob, z);
+      runner.rotation.y = 0;
+      runner.rotation.z = Math.sin(now / 180 + laneIndex) * 0.04;
+      animationClipsRef.current.forEach((clip) => {
+        const mixer = new THREE.AnimationMixer(runner);
+        const action = mixer.clipAction(clip);
+        action.timeScale = 1.15;
+        action.play();
+        mixer.setTime(((now / 1000) + laneIndex * 0.18) % Math.max(0.1, clip.duration));
+        animationMixersRef.current.push(mixer);
+      });
+      runner.traverse((child) => {
+        if (child instanceof THREE.Object3D) {
+          child.visible = !lane.isEliminated || Math.sin(now / 120) > -0.2;
+        }
+      });
+
+      const shadow = new THREE.Mesh(new THREE.CircleGeometry(0.42, 32), shadowMaterial);
+      shadow.rotation.x = -Math.PI / 2;
+      shadow.position.set(x, 0.02, z);
+      shadow.scale.set(1.4, 0.52, 1);
+      racerGroup.add(shadow, runner);
+      racerObjectsRef.current.set(lane.menuId, { laneIndex, runner, shadow });
+    });
+
+    renderer.render(scene, camera);
+  }, [menuIds, modelReady, room.seed]);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+
+    if (!host || !renderer || !scene || !camera || !racerObjectsRef.current.size) {
+      return;
+    }
+
+    const width = Math.max(320, Math.round(host.getBoundingClientRect().width));
+    const height = Math.max(420, Math.round(host.getBoundingClientRect().height));
+    renderer.setSize(width, height, false);
+    const aspect = width / height;
+    const viewHeight = 5.6;
+    camera.left = (-viewHeight * aspect) / 2;
+    camera.right = (viewHeight * aspect) / 2;
+    camera.top = viewHeight / 2;
+    camera.bottom = -viewHeight / 2;
+    camera.updateProjectionMatrix();
+
+    const startX = -3.55;
+    const endX = 3.55;
+    const railZs = [-1.72, 1.86];
+    const railYOffsets = [0.18, 0];
+
+    laneStates.forEach((lane, laneIndex) => {
+      const racer = racerObjectsRef.current.get(lane.menuId);
+      if (!racer) {
+        return;
+      }
+
+      const railIndex = laneIndex % 2;
+      const stackOffset = (Math.floor(laneIndex / 2) - 1) * 0.18;
+      const x = startX + lane.displayProgress * Math.max(1, endX - startX);
+      const z = railZs[railIndex] + stackOffset;
+      const bob = lane.isEliminated ? 0 : Math.sin(now / 115 + laneIndex) * 0.055;
+      const visible = !lane.isEliminated || Math.sin(now / 120) > -0.2;
+
+      racer.runner.position.set(x, 0.16 + railYOffsets[railIndex] + bob, z);
+      racer.runner.rotation.z = Math.sin(now / 180 + laneIndex) * 0.04;
+      racer.runner.visible = visible;
+      racer.shadow.position.set(x, 0.02, z);
+      racer.shadow.visible = visible;
+    });
+  }, [laneStates, modelReady, now]);
+
+  return (
+    <section className="race-canvas-shell race-canvas-shell--3d" aria-label="3D sushi race track">
+      <div className="race-rail-stage" aria-hidden="true">
+        <div className="race-rail-object race-rail-object--top" />
+        <div className="race-rail-object race-rail-object--bottom" />
+        <div className="race-finish-mascot" />
+      </div>
+      <div className="race-three-host" ref={hostRef} />
       <div className="sr-only">
         {laneStates.map((lane) => `${lane.rank}위 ${lane.menuName} ${lane.isEliminated ? "탈락" : formatRaceTime(lane.finishMs)}`).join(", ")}
       </div>
