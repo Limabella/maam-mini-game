@@ -6,6 +6,7 @@ import {
   type CSSProperties,
 } from "react";
 import { Application, Assets, Container, Graphics, Sprite, Text, Texture } from "pixi.js";
+import AssetLab from "./AssetLab";
 import { menuById, menuCards } from "./data/menuCards";
 import { getMenuDisplayName, getRacerForMenu } from "./data/sushiRacers";
 import { createInitialSoundEnabled, useArcadeAudio, type ArcadeAudio } from "./game/audio";
@@ -214,6 +215,9 @@ function App() {
   const appShellClassName = [
     "app-shell",
     !roomCode ? "is-home" : "",
+    room?.status === "lobby" ? "is-vote-lobby" : "",
+    room?.status === "countdown" ? "is-countdown-screen" : "",
+    room?.status === "result" ? "is-result-screen" : "",
     room?.status === "playing" ? "is-race-playing" : "",
   ]
     .filter(Boolean)
@@ -221,11 +225,10 @@ function App() {
 
   return (
     <main className={appShellClassName}>
+      <button className="fixed-brand-logo" type="button" aria-label="LunchFot home" onClick={() => navigateToHome(setRoomCode)}>
+        <img src="/other/lunchfot-icon-cutout.png" alt="LunchFot" />
+      </button>
       <header className="topbar">
-        <button className="brand" type="button" onClick={() => navigateToHome(setRoomCode)}>
-          <span className="brand-mark">LF</span>
-          <span>LunchFot</span>
-        </button>
         <div className="topbar-tools">
           <button
             className={`icon-button sound-toggle${soundEnabled ? " is-on" : ""}`}
@@ -281,6 +284,7 @@ type HomeScreenProps = {
 function HomeScreen({ busy, message, onCreateRoom, onJoinRoom }: HomeScreenProps) {
   const [joinCode, setJoinCode] = useState("");
   const [homeMode, setHomeMode] = useState<"idle" | "games" | "join">("idle");
+  const [assetLabOpen, setAssetLabOpen] = useState(false);
 
   const requestJoin = () => {
     if (joinCode.length === 4) {
@@ -292,7 +296,17 @@ function HomeScreen({ busy, message, onCreateRoom, onJoinRoom }: HomeScreenProps
   };
 
   return (
+    <>
     <section className="home-screen">
+      <button
+        className="home-settings-button"
+        type="button"
+        aria-label="Asset Lab"
+        title="Asset Lab"
+        onClick={() => setAssetLabOpen(true)}
+      >
+        ⚙
+      </button>
       <div className="home-content">
         <div className="home-title" aria-label="Lunch Fot">
           <span className="home-mark">
@@ -329,6 +343,7 @@ function HomeScreen({ busy, message, onCreateRoom, onJoinRoom }: HomeScreenProps
           <button type="button" disabled={busy} onClick={() => setHomeMode("join")}>
             {"\ubc29 \uc785\uc7a5"}
           </button>
+
         </div>
 
         {homeMode === "join" && (
@@ -359,6 +374,18 @@ function HomeScreen({ busy, message, onCreateRoom, onJoinRoom }: HomeScreenProps
         {message && <p className="form-message home-message">{message}</p>}
       </div>
     </section>
+    {assetLabOpen && (
+      <div className="asset-modal" role="dialog" aria-modal="true" aria-label="Character Motion Lab">
+        <div className="asset-modal__backdrop" onClick={() => setAssetLabOpen(false)} />
+        <section className="asset-modal__panel">
+          <button className="asset-modal__close" type="button" aria-label="Close Asset Lab" onClick={() => setAssetLabOpen(false)}>
+            ×
+          </button>
+          <AssetLab embedded />
+        </section>
+      </div>
+    )}
+    </>
   );
 }
 
@@ -456,9 +483,8 @@ function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRo
 
   if (room.status === "countdown") {
     return (
-      <section className="stage countdown-stage">
-        <RoomSummary room={room} roomCode={roomCode} />
-        <FinalistStrip finalistIds={finalistIds} />
+      <section className="countdown-stage">
+        <img className="countdown-logo" src="/hero/maam-food-logo.png" alt="MaAM Food" />
         <div className="countdown-number">{countdownLeft || "GO"}</div>
       </section>
     );
@@ -467,8 +493,6 @@ function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRo
   if (room.status === "playing") {
     return (
       <section className="stage race-stage">
-        <RoomSummary room={room} roomCode={roomCode} />
-        <RaceScoreboard room={room} now={now} />
         <PixiSushiRaceTrack room={room} now={now} />
       </section>
     );
@@ -476,17 +500,18 @@ function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRo
 
   if (room.status === "result" && room.result) {
     return (
-      <section className="stage">
-        <RoomSummary room={room} roomCode={roomCode} />
-        <ResultView isHost={isHost} room={room} roomCode={roomCode} onReset={handleReset} />
+      <section className="stage result-stage">
+        <ResultView room={room} />
       </section>
     );
   }
 
   return (
     <section className="stage lobby-stage">
-      <RoomSummary room={room} roomCode={roomCode} />
-      <PlayerList room={room} />
+      <div className="lobby-info-row">
+        <RoomSummary room={room} roomCode={roomCode} />
+        <PlayerList room={room} />
+      </div>
       <VoteBoard
         currentUid={currentUid}
         isHost={isHost}
@@ -568,7 +593,6 @@ function VoteBoard({ currentUid, isHost, nickname, room, roomCode, store, onStar
   const [draftVotes, setDraftVotes] = useState(savedVotes);
   const tallies = useMemo(() => getVoteTallies(room), [room]);
   const tallyByMenuId = useMemo(() => new Map(tallies.map((entry) => [entry.menuId, entry.votes])), [tallies]);
-  const finalists = useMemo(() => selectFinalists(room), [room]);
   const hasAnyVote = tallies.some((entry) => entry.votes > 0);
 
   useEffect(() => {
@@ -605,13 +629,14 @@ function VoteBoard({ currentUid, isHost, nickname, room, roomCode, store, onStar
         </strong>
       </div>
 
-      <div className="finalist-preview" aria-label="Projected finalists">
-        {finalists.map((menuId) => {
+      <div className={`finalist-preview${draftVotes.length ? " has-selections" : ""}`} aria-label="Selected menus">
+        {draftVotes.map((menuId, index) => {
           const menu = menuById.get(menuId);
           const racer = getRacerForMenu(menuId);
 
           return (
             <article className="finalist-chip" key={menuId} style={{ "--chip-color": racer.color } as CSSProperties}>
+              <span className="finalist-chip__index">{index + 1}</span>
               {menu && <MenuImage menu={menu} variant="preview" />}
               <strong>{getMenuDisplayName(menu)}</strong>
             </article>
@@ -1062,10 +1087,7 @@ function PixiSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
 
   useEffect(() => {
     let cancelled = false;
-    const assetUrls = [
-      "/background/sushi-restaurant-play-bg.png",
-      ...laneStates.map((lane) => menuById.get(lane.menuId)?.imageUrl ?? menuCards[0].imageUrl),
-    ];
+    const assetUrls = laneStates.map((lane) => menuById.get(lane.menuId)?.imageUrl ?? menuCards[0].imageUrl);
 
     assetUrls.forEach((url) => {
       if (textureRef.current.has(url)) {
@@ -1101,20 +1123,6 @@ function PixiSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
     }
 
     app.stage.removeChildren();
-
-    const backgroundTexture = textureRef.current.get("/background/sushi-restaurant-play-bg.png");
-    if (backgroundTexture) {
-      const background = new Sprite(backgroundTexture);
-      const scale = Math.max(width / background.texture.width, height / background.texture.height);
-      background.scale.set(scale);
-      background.x = (width - background.texture.width * scale) / 2;
-      background.y = (height - background.texture.height * scale) / 2;
-      app.stage.addChild(background);
-    }
-
-    const overlay = new Graphics();
-    overlay.rect(0, 0, width, height).fill({ color: 0x140b06, alpha: 0.45 });
-    app.stage.addChild(overlay);
 
     const padding = width < 720 ? 16 : 28;
     const labelWidth = width < 720 ? 86 : 124;
@@ -1281,56 +1289,49 @@ function PixiSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
 }
 
 type ResultViewProps = {
-  isHost: boolean;
   room: RoomState;
-  roomCode: string;
-  onReset: () => void;
 };
 
-function ResultView({ isHost, room, roomCode, onReset }: ResultViewProps) {
+function ResultView({ room }: ResultViewProps) {
   const result = room.result;
   const winnerMenu = menuById.get(result?.menuId ?? "") ?? menuCards[0];
-  const winnerRacer = getRacerForMenu(winnerMenu.id);
   const rankings = result?.raceRankings ?? [];
-  const shareText = `오늘 점심 우승: ${getMenuDisplayName(winnerMenu)} (${roomCode})`;
+  const votersByMenuId = useMemo(() => {
+    const voters = new Map<string, string[]>();
 
-  const copyResult = async () => {
-    await navigator.clipboard.writeText(`${shareText}\n${window.location.href}`);
-  };
+    Object.values(room.votes ?? {}).forEach((entry) => {
+      entry.menuIds.forEach((menuId) => {
+        const next = voters.get(menuId) ?? [];
+        next.push(entry.nickname);
+        voters.set(menuId, next);
+      });
+    });
+
+    return voters;
+  }, [room.votes]);
 
   return (
-    <section className="result-layout">
-      <article className="result-winner-card" style={{ "--winner-color": winnerRacer.color } as CSSProperties}>
-        <div className="winner-image-wrap">
-          <MenuImage menu={winnerMenu} variant="winner" />
-          <span>{winnerRacer.icon}</span>
-        </div>
-        <p className="status-label">우승 메뉴</p>
-        <h2>{getMenuDisplayName(winnerMenu)}</h2>
-        <strong>{result?.characterName ?? winnerRacer.characterName}</strong>
-        <em>{result?.finishMs ? formatRaceTime(result.finishMs) : ""}</em>
+    <section className="result-popup">
+      <article className="result-popup__image">
+        <MenuImage menu={winnerMenu} variant="winner" />
       </article>
 
-      <section className="panel result-detail">
+      <section className="result-popup__rank-panel" aria-label="Race rankings">
         <div className="result-rankings">
+          <article className="result-rank-row result-rank-row--head">
+            <strong>순위</strong>
+            <span>음식명</span>
+            <em>걸린시간</em>
+            <span>선택사용자이름</span>
+          </article>
           {rankings.map((entry) => (
             <article className="result-rank-row" key={entry.menuId}>
               <strong>{entry.rank}</strong>
               <span>{entry.menuName}</span>
-              <span>{entry.characterName}</span>
               <em>{formatRaceTime(entry.finishMs)}</em>
+              <span>{votersByMenuId.get(entry.menuId)?.join(", ") || "-"}</span>
             </article>
           ))}
-        </div>
-        <div className="result-actions">
-          <button className="secondary-button" type="button" onClick={copyResult}>
-            결과 공유
-          </button>
-          {isHost && (
-            <button className="ghost-button" type="button" onClick={onReset}>
-              다시 하기
-            </button>
-          )}
         </div>
       </section>
     </section>
@@ -1338,11 +1339,12 @@ function ResultView({ isHost, room, roomCode, onReset }: ResultViewProps) {
 }
 
 function MenuImage({ menu, variant = "thumb" }: { menu: MenuCard; variant?: "preview" | "thumb" | "runner" | "winner" }) {
-  const [src, setSrc] = useState(menu.imageUrl);
+  const primarySrc = variant === "preview" || variant === "thumb" ? getFoodImageUrl(menu) : menu.imageUrl;
+  const [src, setSrc] = useState(primarySrc);
 
   useEffect(() => {
-    setSrc(menu.imageUrl);
-  }, [menu.imageUrl]);
+    setSrc(primarySrc);
+  }, [primarySrc]);
 
   return (
     <span className={`menu-image menu-image--${variant}`}>
@@ -1360,3 +1362,4 @@ function MenuImage({ menu, variant = "thumb" }: { menu: MenuCard; variant?: "pre
 }
 
 export default App;
+
