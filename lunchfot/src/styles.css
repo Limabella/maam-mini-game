@@ -40,10 +40,52 @@ img {
 }
 
 .app-shell {
+  position: relative;
   width: min(100%, 1040px);
   min-height: 100vh;
   margin: 0 auto;
   padding: 18px 16px 32px;
+}
+
+.app-shell.is-race-playing {
+  isolation: isolate;
+}
+
+.app-shell.is-race-playing::before,
+.app-shell.is-race-playing::after {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  content: "";
+}
+
+.app-shell.is-race-playing::before {
+  background: url("/background/sushi-restaurant-play-bg.png") center / cover no-repeat;
+}
+
+.app-shell.is-race-playing::after {
+  z-index: -1;
+  background:
+    radial-gradient(circle at 50% 26%, rgba(255, 244, 222, 0.2), transparent 38%),
+    linear-gradient(180deg, rgba(18, 12, 8, 0.34), rgba(18, 12, 8, 0.52));
+}
+
+.app-shell.is-race-playing .brand {
+  color: #fffaf0;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.36);
+}
+
+.app-shell.is-race-playing .room-summary,
+.app-shell.is-race-playing .race-scoreboard {
+  border-color: rgba(255, 255, 255, 0.28);
+  background: rgba(255, 250, 240, 0.78);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 18px 48px rgba(12, 8, 4, 0.26);
+}
+
+.app-shell.is-race-playing .env-note {
+  color: rgba(255, 250, 240, 0.82);
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.38);
 }
 
 .app-shell.is-home {
@@ -794,6 +836,17 @@ input:focus {
   height: clamp(430px, 62vh, 620px);
 }
 
+.race-pixi-host {
+  width: 100%;
+  height: clamp(430px, 62vh, 620px);
+}
+
+.race-pixi-host canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -1347,6 +1400,10 @@ input:focus {
   }
 
   .race-canvas {
+    height: 460px;
+  }
+
+  .race-pixi-host {
     height: 460px;
   }
 

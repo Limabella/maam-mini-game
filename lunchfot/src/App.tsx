@@ -5,6 +5,7 @@ import {
   useState,
   type CSSProperties,
 } from "react";
+import { Application, Assets, Container, Graphics, Sprite, Text, Texture } from "pixi.js";
 import { menuById, menuCards } from "./data/menuCards";
 import { getMenuDisplayName, getRacerForMenu } from "./data/sushiRacers";
 import { createInitialSoundEnabled, useArcadeAudio, type ArcadeAudio } from "./game/audio";
@@ -72,6 +73,15 @@ const navigateToHome = (setRoomCode: (code: string) => void) => {
 const playerCount = (room: RoomState | null) => Object.keys(room?.players ?? {}).length;
 
 const getVoteCount = (room: RoomState, uid: string) => room.votes?.[uid]?.menuIds.length ?? 0;
+
+const getAssetStem = (menu: MenuCard) => {
+  const match = menu.imageUrl.match(/\/([^/]+)\.png$/);
+  return match?.[1] ?? menu.id.replace("-lm", "");
+};
+
+const getFoodImageUrl = (menu: MenuCard) => `/food/food_${getAssetStem(menu)}.png`;
+
+const getRunnerImageUrl = (menu: MenuCard) => `/hero/runner_${getAssetStem(menu)}.png`;
 
 type GamePhaseId = "sushi" | "pending" | "dart";
 
@@ -201,9 +211,16 @@ function App() {
   }
 
   const currentPlayer = room?.players?.[store.uid] ?? null;
+  const appShellClassName = [
+    "app-shell",
+    !roomCode ? "is-home" : "",
+    room?.status === "playing" ? "is-race-playing" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
-    <main className={`app-shell${!roomCode ? " is-home" : ""}`}>
+    <main className={appShellClassName}>
       <header className="topbar">
         <button className="brand" type="button" onClick={() => navigateToHome(setRoomCode)}>
           <span className="brand-mark">LF</span>
@@ -452,7 +469,7 @@ function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRo
       <section className="stage race-stage">
         <RoomSummary room={room} roomCode={roomCode} />
         <RaceScoreboard room={room} now={now} />
-        <SushiRaceTrack room={room} now={now} />
+        <PixiSushiRaceTrack room={room} now={now} />
       </section>
     );
   }
@@ -988,6 +1005,274 @@ function SushiRaceTrack({ room, now }: SushiRaceTrackProps) {
   return (
     <section className="race-canvas-shell" aria-label="Sushi race track">
       <canvas className="race-canvas" ref={canvasRef} />
+      <div className="sr-only">
+        {laneStates.map((lane) => `${lane.rank}위 ${lane.menuName} ${lane.isEliminated ? "탈락" : formatRaceTime(lane.finishMs)}`).join(", ")}
+      </div>
+    </section>
+  );
+}
+
+function PixiSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const appRef = useRef<Application | null>(null);
+  const readyRef = useRef(false);
+  const textureRef = useRef<Map<string, Texture>>(new Map());
+  const [assetTick, setAssetTick] = useState(0);
+  const laneStates = getRaceLaneStates(room, now);
+  const activeEvents = getActiveRaceEvents(room, now);
+  const menuIds = laneStates.map((lane) => lane.menuId).join("|");
+
+  useEffect(() => {
+    let cancelled = false;
+    const host = hostRef.current;
+    if (!host || appRef.current) {
+      return;
+    }
+
+    const app = new Application();
+    app
+      .init({
+        antialias: true,
+        autoDensity: true,
+        backgroundAlpha: 0,
+        height: Math.max(420, Math.round(host.getBoundingClientRect().height)),
+        resolution: window.devicePixelRatio || 1,
+        width: Math.max(320, Math.round(host.getBoundingClientRect().width)),
+      })
+      .then(() => {
+        if (cancelled) {
+          app.destroy(true);
+          return;
+        }
+
+        appRef.current = app;
+        host.appendChild(app.canvas);
+        readyRef.current = true;
+        setAssetTick((tick) => tick + 1);
+      })
+      .catch(console.error);
+
+    return () => {
+      cancelled = true;
+      readyRef.current = false;
+      appRef.current?.destroy(true);
+      appRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const assetUrls = [
+      "/background/sushi-restaurant-play-bg.png",
+      ...laneStates.map((lane) => menuById.get(lane.menuId)?.imageUrl ?? menuCards[0].imageUrl),
+    ];
+
+    assetUrls.forEach((url) => {
+      if (textureRef.current.has(url)) {
+        return;
+      }
+
+      Assets.load<Texture>(url)
+        .then((texture) => {
+          if (!cancelled) {
+            textureRef.current.set(url, texture);
+            setAssetTick((tick) => tick + 1);
+          }
+        })
+        .catch(console.error);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [laneStates, menuIds]);
+
+  useEffect(() => {
+    const app = appRef.current;
+    const host = hostRef.current;
+    if (!app || !host || !readyRef.current) {
+      return;
+    }
+
+    const width = Math.max(320, Math.round(host.getBoundingClientRect().width));
+    const height = Math.max(420, Math.round(host.getBoundingClientRect().height));
+    if (app.renderer.width !== width || app.renderer.height !== height) {
+      app.renderer.resize(width, height);
+    }
+
+    app.stage.removeChildren();
+
+    const backgroundTexture = textureRef.current.get("/background/sushi-restaurant-play-bg.png");
+    if (backgroundTexture) {
+      const background = new Sprite(backgroundTexture);
+      const scale = Math.max(width / background.texture.width, height / background.texture.height);
+      background.scale.set(scale);
+      background.x = (width - background.texture.width * scale) / 2;
+      background.y = (height - background.texture.height * scale) / 2;
+      app.stage.addChild(background);
+    }
+
+    const overlay = new Graphics();
+    overlay.rect(0, 0, width, height).fill({ color: 0x140b06, alpha: 0.45 });
+    app.stage.addChild(overlay);
+
+    const padding = width < 720 ? 16 : 28;
+    const labelWidth = width < 720 ? 86 : 124;
+    const trackX = padding + labelWidth;
+    const finishX = width - padding - 34;
+    const startX = trackX + 24;
+    const endX = finishX - 34;
+    const railYs = [height * 0.42, height * 0.68];
+    const railHeight = width < 720 ? 82 : 100;
+    const beltOffset = (now / 13) % 72;
+
+    railYs.forEach((railY, railIndex) => {
+      const rail = new Graphics();
+      rail
+        .roundRect(trackX - 18, railY - railHeight / 2, finishX - trackX + 34, railHeight, railHeight / 2)
+        .fill({ color: railIndex === 0 ? 0x6b3f1f : 0x3d2414, alpha: 0.78 })
+        .stroke({ color: 0xffd08a, alpha: 0.4, width: 2 });
+      app.stage.addChild(rail);
+
+      const rollers = new Graphics();
+      for (let x = trackX - 72; x < finishX + 52; x += 36) {
+        const rollerX = x + beltOffset;
+        rollers.circle(rollerX, railY, 7).fill({ color: 0xfff7df, alpha: 0.72 });
+        rollers.rect(rollerX + 13, railY - railHeight / 2 + 9, 5, railHeight - 18).fill({ color: 0x1f130d, alpha: 0.28 });
+      }
+      app.stage.addChild(rollers);
+
+      const laneTag = new Text({
+        text: `${railIndex + 1} 레일`,
+        style: { fill: 0xffffff, fontFamily: "Pretendard, Inter, sans-serif", fontSize: 13, fontWeight: "900" },
+      });
+      laneTag.x = padding;
+      laneTag.y = railY - 10;
+      app.stage.addChild(laneTag);
+    });
+
+    const finish = new Graphics();
+    finish.roundRect(finishX, padding, 16, height - padding * 2, 4).fill({ color: 0x111827, alpha: 0.94 });
+    for (let y = padding; y < height - padding; y += 18) {
+      finish.rect(finishX, y, 16, 9).fill({ color: Math.floor((y - padding) / 18) % 2 === 0 ? 0xffffff : 0x111827 });
+    }
+    app.stage.addChild(finish);
+
+    laneStates.forEach((lane, laneIndex) => {
+      const railIndex = laneIndex % 2;
+      const stackOffset = (Math.floor(laneIndex / 2) - 1) * 18;
+      const railY = railYs[railIndex];
+      const runnerX = startX + lane.displayProgress * Math.max(1, endX - startX);
+      const runnerY = railY + stackOffset + Math.sin(now / 115 + laneIndex) * (lane.isEliminated ? 1 : 5);
+      const activeLaneEvents = activeEvents.filter((event) => event.affectsAll || event.laneIndex === laneIndex);
+      const hasGreenTea = activeLaneEvents.some((event) => event.type === "green-tea");
+      const hasReverse = activeLaneEvents.some((event) => event.type === "reverse-belt");
+      const hasChopsticks = activeLaneEvents.some((event) => event.type === "chopsticks");
+      const layer = new Container();
+      layer.alpha = lane.isEliminated ? 0.55 : 1;
+
+      if (hasGreenTea) {
+        const spill = new Graphics();
+        spill.ellipse(runnerX + 10, railY + 32, 56, 13).fill({ color: 0x16a34a, alpha: 0.55 });
+        spill.ellipse(runnerX - 32, railY + 34, 22, 8).fill({ color: 0x86efac, alpha: 0.65 });
+        app.stage.addChild(spill);
+      }
+
+      const shadow = new Graphics();
+      shadow.ellipse(runnerX, railY + 38, 34, 9).fill({ color: 0x000000, alpha: 0.24 });
+      layer.addChild(shadow);
+
+      const plateColor = Number(`0x${lane.color.replace("#", "")}`);
+      const plate = new Graphics();
+      plate.circle(runnerX, runnerY, 32).fill({ color: 0xffffff }).stroke({ color: plateColor, width: 3 });
+      layer.addChild(plate);
+
+      const menu = menuById.get(lane.menuId) ?? menuCards[0];
+      const texture = textureRef.current.get(menu.imageUrl);
+      if (texture) {
+        const mask = new Graphics().circle(runnerX, runnerY, 24).fill({ color: 0xffffff });
+        const sprite = new Sprite(texture);
+        sprite.anchor.set(0.5);
+        sprite.x = runnerX;
+        sprite.y = runnerY;
+        sprite.width = 50;
+        sprite.height = 50;
+        sprite.mask = mask;
+        layer.addChild(mask, sprite);
+      } else {
+        const fallback = new Text({
+          text: lane.icon,
+          style: { fontFamily: "Apple Color Emoji, Segoe UI Emoji", fontSize: 24 },
+        });
+        fallback.anchor.set(0.5);
+        fallback.x = runnerX;
+        fallback.y = runnerY;
+        layer.addChild(fallback);
+      }
+
+      const nameText = new Text({
+        text: lane.menuName,
+        style: {
+          fill: 0xffffff,
+          fontFamily: "Pretendard, Inter, sans-serif",
+          fontSize: width < 720 ? 11 : 13,
+          fontWeight: "900",
+          stroke: { color: 0x111827, width: 3 },
+        },
+      });
+      nameText.anchor.set(0.5);
+      nameText.x = runnerX;
+      nameText.y = runnerY + 45;
+      layer.addChild(nameText);
+
+      if (hasReverse) {
+        const sweat = new Text({
+          text: "💦",
+          style: { fontFamily: "Apple Color Emoji, Segoe UI Emoji", fontSize: 22 },
+        });
+        sweat.x = runnerX + 30;
+        sweat.y = runnerY - 48;
+        layer.addChild(sweat);
+      }
+
+      if (hasChopsticks) {
+        const chopsticks = new Graphics();
+        chopsticks.moveTo(runnerX - 18, runnerY - 90).lineTo(runnerX - 6, runnerY - 13).stroke({ color: 0xa16207, width: 7, cap: "round" });
+        chopsticks.moveTo(runnerX + 18, runnerY - 90).lineTo(runnerX + 6, runnerY - 13).stroke({ color: 0xa16207, width: 7, cap: "round" });
+        layer.addChild(chopsticks);
+      }
+
+      if (lane.isEliminated) {
+        const badge = new Graphics();
+        badge.roundRect(runnerX - 26, runnerY - 54, 52, 26, 13).fill({ color: 0x991b1b, alpha: 0.96 });
+        const eliminated = new Text({
+          text: "탈락",
+          style: { fill: 0xffffff, fontFamily: "Pretendard, Inter, sans-serif", fontSize: 13, fontWeight: "900" },
+        });
+        eliminated.anchor.set(0.5);
+        eliminated.x = runnerX;
+        eliminated.y = runnerY - 41;
+        layer.addChild(badge, eliminated);
+      }
+
+      if (lane.isFinished) {
+        const flag = new Text({
+          text: "🏁",
+          style: { fontFamily: "Apple Color Emoji, Segoe UI Emoji", fontSize: 24 },
+        });
+        flag.anchor.set(0.5);
+        flag.x = runnerX + 44;
+        flag.y = runnerY - 20;
+        layer.addChild(flag);
+      }
+
+      app.stage.addChild(layer);
+    });
+  }, [activeEvents, assetTick, laneStates, now]);
+
+  return (
+    <section className="race-canvas-shell" aria-label="Sushi race track">
+      <div className="race-pixi-host" ref={hostRef} />
       <div className="sr-only">
         {laneStates.map((lane) => `${lane.rank}위 ${lane.menuName} ${lane.isEliminated ? "탈락" : formatRaceTime(lane.finishMs)}`).join(", ")}
       </div>
