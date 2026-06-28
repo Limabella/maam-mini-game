@@ -26,7 +26,7 @@ const makeMenu = (
 ): MenuCard => ({
   id,
   name,
-  imageUrl: `/menu/${fileName}`,
+  imageUrl: `/card/${fileName}`,
   fallbackImageUrl: svgDataUri(name, icon, accent, paper),
   tags,
   stats,

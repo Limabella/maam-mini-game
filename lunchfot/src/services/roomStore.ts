@@ -11,14 +11,18 @@ import {
   getDatabase,
   onValue,
   ref,
-  remove,
   set,
   update,
   type Database,
 } from "firebase/database";
 import { menuCards } from "../data/menuCards";
-import { canThrowAtSpeed, MAX_SPIN_BOOSTS, SPIN_BOOST_DECAY_MS } from "../game/roulette";
-import type { DartAimEntry, ResultEntry, RoomState, SpinBoostEntry, ThrowEntry } from "../types";
+import {
+  createRaceEvents,
+  createRaceDuration,
+  selectFinalists,
+  VOTE_LIMIT,
+} from "../game/sushiRace";
+import type { MenuVoteEntry, ResultEntry, RoomState } from "../types";
 
 export type Unsubscribe = () => void;
 
@@ -28,19 +32,17 @@ export type RoomStore = {
   createRoom: (nickname: string) => Promise<string>;
   joinRoom: (roomCode: string, nickname: string) => Promise<void>;
   watchRoom: (roomCode: string, onRoom: (room: RoomState | null) => void) => Unsubscribe;
+  submitVote: (roomCode: string, nickname: string, menuIds: string[]) => Promise<void>;
   startGame: (roomCode: string) => Promise<void>;
   setPlaying: (roomCode: string) => Promise<void>;
-  startSpin: (roomCode: string, boostPower?: number) => Promise<void>;
-  updateDartAim: (roomCode: string, aim: DartAimEntry | null) => Promise<void>;
-  throwDart: (roomCode: string, nickname: string, throwEntry?: Partial<ThrowEntry>) => Promise<void>;
   finishGame: (roomCode: string, result: ResultEntry) => Promise<void>;
   resetRoom: (roomCode: string) => Promise<void>;
 };
 
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-const LOCAL_UID_KEY = "lunch-dart:uid";
-const LOCAL_NICKNAME_KEY = "lunch-dart:nickname";
-const LOCAL_ROOM_PREFIX = "lunch-dart:room:";
+const LOCAL_UID_KEY = "lunch-sushi-race:uid";
+const LOCAL_NICKNAME_KEY = "lunch-sushi-race:nickname";
+const LOCAL_ROOM_PREFIX = "lunch-sushi-race:room:";
 const listeners = new Map<string, Set<(room: RoomState | null) => void>>();
 const CURRENT_MENU_IDS = menuCards.map((menu) => menu.id);
 const CURRENT_MENU_ID_SET = new Set(CURRENT_MENU_IDS);
@@ -77,48 +79,90 @@ const generateRoomCode = () => {
 
 const randomSeed = () => Math.floor(Math.random() * 2_147_483_647);
 
-const clampBoostPower = (power: number | undefined) => {
-  if (!Number.isFinite(power)) {
-    return 3.2;
-  }
-
-  const direction = (power ?? 3.2) < 0 ? -1 : 1;
-  const magnitude = Math.min(11, Math.max(2.6, Math.abs(power ?? 3.2)));
-
-  return direction * magnitude;
+const sanitizeVote = (menuIds: string[]) => {
+  return Array.from(new Set(menuIds.filter((menuId) => CURRENT_MENU_ID_SET.has(menuId)))).slice(0, VOTE_LIMIT);
 };
 
-const createSpinBoost = (uid: string, now: number, boostPower?: number): [string, SpinBoostEntry] => {
-  const boostId = `${uid}-${now}-${Math.random().toString(36).slice(2, 8)}`;
+const buildVoteEntry = (nickname: string, menuIds: string[]): MenuVoteEntry => ({
+  menuIds: sanitizeVote(menuIds),
+  nickname,
+  updatedAt: Date.now(),
+});
 
-  return [
-    boostId,
-    {
-      boostAt: now,
-      durationMs: SPIN_BOOST_DECAY_MS,
-      power: clampBoostPower(boostPower),
-    },
-  ];
-};
-
-const getRecentBoostEntries = (room: RoomState, limit: number) => {
-  return Object.entries(room.spinBoosts ?? {})
-    .sort(([, a], [, b]) => b.boostAt - a.boostAt)
-    .slice(0, limit);
-};
-
-const normalizeRoomMenus = (room: RoomState) => {
-  const needsMigration =
-    room.menuCards.length !== CURRENT_MENU_IDS.length ||
-    room.menuCards.some((menuId) => !CURRENT_MENU_ID_SET.has(menuId));
-
-  if (!needsMigration) {
-    return room;
-  }
+const normalizeRoom = (room: RoomState): RoomState => {
+  const normalizedMenuCards =
+    room.menuCards?.length === CURRENT_MENU_IDS.length && room.menuCards.every((menuId) => CURRENT_MENU_ID_SET.has(menuId))
+      ? room.menuCards
+      : [...CURRENT_MENU_IDS];
 
   return {
     ...room,
+    menuCards: normalizedMenuCards,
+    spinStartAt: room.spinStartAt ?? null,
+    spinBoosts: room.spinBoosts ?? {},
+    wheelSpeed: room.wheelSpeed ?? 0.128,
+    throws: room.throws ?? {},
+    dartAims: room.dartAims ?? {},
+    votes: room.votes ?? {},
+    finalists: room.finalists ?? [],
+    raceEvents: room.raceEvents ?? [],
+    raceStartedAt: room.raceStartedAt ?? null,
+    raceDurationMs: room.raceDurationMs ?? createRaceDuration(room.seed),
+    result: room.result ?? null,
+  };
+};
+
+const createInitialRoom = (hostUid: string, nickname: string): RoomState => {
+  const now = Date.now();
+  const seed = randomSeed();
+
+  return {
+    hostUid,
+    status: "lobby",
+    createdAt: now,
+    seed,
+    startAt: null,
+    spinStartAt: null,
+    spinBoosts: {},
+    wheelSpeed: 0.128,
     menuCards: [...CURRENT_MENU_IDS],
+    players: {
+      [hostUid]: {
+        nickname,
+        joinedAt: now,
+      },
+    },
+    votes: {},
+    finalists: [],
+    raceEvents: [],
+    raceStartedAt: null,
+    raceDurationMs: createRaceDuration(seed),
+    throws: {},
+    dartAims: {},
+    result: null,
+  };
+};
+
+const createRaceStartPatch = (room: RoomState) => {
+  const seed = randomSeed();
+  const roomWithSeed = normalizeRoom({ ...room, seed });
+  const finalists = selectFinalists(roomWithSeed);
+  const raceDurationMs = createRaceDuration(seed);
+  const currentPlayerCount = Object.keys(room.players).length;
+
+  return {
+    status: "countdown" as const,
+    seed,
+    startAt: Date.now() + 3200,
+    raceStartedAt: null,
+    raceDurationMs,
+    finalists,
+    raceEvents: createRaceEvents(finalists, seed, raceDurationMs, currentPlayerCount),
+    spinStartAt: null,
+    spinBoosts: {},
+    throws: {},
+    dartAims: {},
+    result: null,
   };
 };
 
@@ -129,7 +173,7 @@ const readLocalRoom = (roomCode: string): RoomState | null => {
   }
 
   try {
-    const room = normalizeRoomMenus(JSON.parse(raw) as RoomState);
+    const room = normalizeRoom(JSON.parse(raw) as RoomState);
     localStorage.setItem(roomKey(roomCode), JSON.stringify(room));
     return room;
   } catch {
@@ -162,31 +206,6 @@ const getLocalUid = () => {
   return uid;
 };
 
-const createInitialRoom = (hostUid: string, nickname: string): RoomState => {
-  const now = Date.now();
-
-  return {
-    hostUid,
-    status: "lobby",
-    createdAt: now,
-    seed: randomSeed(),
-    startAt: null,
-    spinStartAt: null,
-    spinBoosts: {},
-    wheelSpeed: 0.128,
-    menuCards: menuCards.map((menu) => menu.id),
-    players: {
-      [hostUid]: {
-        nickname,
-        joinedAt: now,
-      },
-    },
-    throws: {},
-    dartAims: {},
-    result: null,
-  };
-};
-
 const ensureFirebaseUser = (auth: Auth) =>
   new Promise<User>((resolve, reject) => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -217,27 +236,14 @@ const createFirebaseStore = async (): Promise<RoomStore> => {
       const roomRef = ref(database, `rooms/${roomCode}`);
       return onValue(roomRef, (snapshot) => {
         const room = snapshot.val() as RoomState | null;
-
-        if (!room) {
-          onRoom(null);
-          return;
-        }
-
-        const normalizedRoom = normalizeRoomMenus(room);
-        if (normalizedRoom !== room) {
-          update(roomRef, { menuCards: [...CURRENT_MENU_IDS] }).catch(() => {});
-        }
-
-        onRoom(normalizedRoom);
+        onRoom(room ? normalizeRoom(room) : null);
       });
     },
-    startGame: (roomCode) => firebaseStartGame(database, roomCode),
+    submitVote: (roomCode, nickname, menuIds) => firebaseSubmitVote(database, user.uid, roomCode, nickname, menuIds),
+    startGame: (roomCode) => firebaseStartGame(database, user.uid, roomCode),
     setPlaying: (roomCode) => firebaseSetPlaying(database, roomCode),
-    startSpin: (roomCode, boostPower) => firebaseStartSpin(database, user.uid, roomCode, boostPower),
-    updateDartAim: (roomCode, aim) => firebaseUpdateDartAim(database, user.uid, roomCode, aim),
-    throwDart: (roomCode, nickname, throwEntry) => firebaseThrowDart(database, user.uid, roomCode, nickname, throwEntry),
     finishGame: (roomCode, result) => firebaseFinishGame(database, roomCode, result),
-    resetRoom: (roomCode) => firebaseResetRoom(database, roomCode),
+    resetRoom: (roomCode) => firebaseResetRoom(database, user.uid, roomCode),
   };
 };
 
@@ -265,7 +271,7 @@ const firebaseJoinRoom = async (database: Database, uid: string, roomCode: strin
     throw new Error("방을 찾을 수 없습니다.");
   }
 
-  const room = snapshot.val() as RoomState;
+  const room = normalizeRoom(snapshot.val() as RoomState);
   if (room.status !== "lobby") {
     throw new Error("이미 시작된 방입니다.");
   }
@@ -276,25 +282,13 @@ const firebaseJoinRoom = async (database: Database, uid: string, roomCode: strin
   });
 };
 
-const firebaseStartGame = async (database: Database, roomCode: string) => {
-  await update(ref(database, `rooms/${roomCode}`), {
-    status: "countdown",
-    startAt: Date.now() + 3200,
-    spinStartAt: null,
-    spinBoosts: {},
-    throws: {},
-    dartAims: {},
-    result: null,
-  });
-};
-
-const firebaseSetPlaying = async (database: Database, roomCode: string) => {
-  await update(ref(database, `rooms/${roomCode}`), {
-    status: "playing",
-  });
-};
-
-const firebaseStartSpin = async (database: Database, uid: string, roomCode: string, boostPower?: number) => {
+const firebaseSubmitVote = async (
+  database: Database,
+  uid: string,
+  roomCode: string,
+  nickname: string,
+  menuIds: string[],
+) => {
   const roomRef = ref(database, `rooms/${roomCode}`);
   const snapshot = await get(roomRef);
 
@@ -302,72 +296,47 @@ const firebaseStartSpin = async (database: Database, uid: string, roomCode: stri
     return;
   }
 
-  const room = snapshot.val() as RoomState;
-  if (room.status !== "playing" || room.hostUid !== uid) {
+  const room = normalizeRoom(snapshot.val() as RoomState);
+  if (room.status !== "lobby") {
     return;
   }
 
-  const now = Date.now();
-  const [boostId, boost] = createSpinBoost(uid, now, boostPower);
-  const recentIds = new Set(getRecentBoostEntries(room, MAX_SPIN_BOOSTS - 1).map(([id]) => id));
-  const updates: Record<string, unknown> = {
-    [`spinBoosts/${boostId}`]: boost,
-  };
-
-  if (!room.spinStartAt) {
-    updates.spinStartAt = now;
-  }
-
-  Object.keys(room.spinBoosts ?? {}).forEach((id) => {
-    if (!recentIds.has(id)) {
-      updates[`spinBoosts/${id}`] = null;
-    }
-  });
-
-  await update(roomRef, updates);
+  await set(ref(database, `rooms/${roomCode}/votes/${uid}`), buildVoteEntry(nickname, menuIds));
 };
 
-const firebaseUpdateDartAim = async (database: Database, uid: string, roomCode: string, aim: DartAimEntry | null) => {
-  await set(ref(database, `rooms/${roomCode}/dartAims/${uid}`), aim);
+const firebaseStartGame = async (database: Database, uid: string, roomCode: string) => {
+  const roomRef = ref(database, `rooms/${roomCode}`);
+  const snapshot = await get(roomRef);
+
+  if (!snapshot.exists()) {
+    return;
+  }
+
+  const room = normalizeRoom(snapshot.val() as RoomState);
+  if (room.status !== "lobby" || room.hostUid !== uid) {
+    return;
+  }
+
+  await update(roomRef, createRaceStartPatch(room));
 };
 
-const firebaseThrowDart = async (
-  database: Database,
-  uid: string,
-  roomCode: string,
-  nickname: string,
-  throwEntry?: Partial<ThrowEntry>,
-) => {
-  const roomSnapshot = await get(ref(database, `rooms/${roomCode}`));
-  if (!roomSnapshot.exists()) {
+const firebaseSetPlaying = async (database: Database, roomCode: string) => {
+  const roomRef = ref(database, `rooms/${roomCode}`);
+  const snapshot = await get(roomRef);
+
+  if (!snapshot.exists()) {
     return;
   }
 
-  const room = roomSnapshot.val() as RoomState;
-  if (room.status !== "playing" || !room.spinStartAt) {
+  const room = normalizeRoom(snapshot.val() as RoomState);
+  if (room.status !== "countdown") {
     return;
   }
 
-  if (!canThrowAtSpeed(room.spinStartAt, Date.now(), room.spinBoosts)) {
-    return;
-  }
-
-  const throwRef = ref(database, `rooms/${roomCode}/throws/${uid}`);
-  const snapshot = await get(throwRef);
-
-  if (snapshot.exists()) {
-    return;
-  }
-
-  const now = Date.now();
-  await set(throwRef, {
-    aimOffset: throwEntry?.aimOffset ?? 0,
-    charge: throwEntry?.charge ?? 1,
-    launchedAt: throwEntry?.launchedAt ?? now,
-    nickname,
-    throwAt: throwEntry?.throwAt ?? now,
+  await update(roomRef, {
+    status: "playing",
+    raceStartedAt: Date.now(),
   });
-  await remove(ref(database, `rooms/${roomCode}/dartAims/${uid}`));
 };
 
 const firebaseFinishGame = async (database: Database, roomCode: string, result: ResultEntry) => {
@@ -377,16 +346,31 @@ const firebaseFinishGame = async (database: Database, roomCode: string, result: 
   });
 };
 
-const firebaseResetRoom = async (database: Database, roomCode: string) => {
-  await update(ref(database, `rooms/${roomCode}`), {
+const firebaseResetRoom = async (database: Database, uid: string, roomCode: string) => {
+  const roomRef = ref(database, `rooms/${roomCode}`);
+  const snapshot = await get(roomRef);
+
+  if (!snapshot.exists()) {
+    return;
+  }
+
+  const room = normalizeRoom(snapshot.val() as RoomState);
+  if (room.hostUid !== uid) {
+    return;
+  }
+
+  await update(roomRef, {
     status: "lobby",
     startAt: null,
+    raceStartedAt: null,
+    finalists: [],
+    raceEvents: [],
+    result: null,
+    throws: {},
+    dartAims: {},
     spinStartAt: null,
     spinBoosts: {},
-    result: null,
   });
-  await remove(ref(database, `rooms/${roomCode}/throws`));
-  await remove(ref(database, `rooms/${roomCode}/dartAims`));
 };
 
 const createLocalStore = (): RoomStore => {
@@ -398,7 +382,7 @@ const createLocalStore = (): RoomStore => {
     }
 
     const roomCode = event.key.replace(LOCAL_ROOM_PREFIX, "");
-    const room = event.newValue ? (JSON.parse(event.newValue) as RoomState) : null;
+    const room = event.newValue ? normalizeRoom(JSON.parse(event.newValue) as RoomState) : null;
     emitLocalRoom(roomCode, room);
   });
 
@@ -449,99 +433,46 @@ const createLocalStore = (): RoomStore => {
         roomListeners.delete(onRoom);
       };
     },
-    startGame: async (roomCode) => {
+    submitVote: async (roomCode, nickname, menuIds) => {
       const room = readLocalRoom(roomCode);
-      if (!room) {
+      if (!room || room.status !== "lobby") {
         return;
       }
 
       writeLocalRoom(roomCode, {
         ...room,
-        status: "countdown",
-        startAt: Date.now() + 3200,
-        spinStartAt: null,
-        spinBoosts: {},
-        throws: {},
-        dartAims: {},
-        result: null,
+        votes: {
+          ...(room.votes ?? {}),
+          [uid]: buildVoteEntry(nickname, menuIds),
+        },
+      });
+    },
+    startGame: async (roomCode) => {
+      const room = readLocalRoom(roomCode);
+      if (!room || room.status !== "lobby" || room.hostUid !== uid) {
+        return;
+      }
+
+      writeLocalRoom(roomCode, {
+        ...room,
+        ...createRaceStartPatch(room),
       });
     },
     setPlaying: async (roomCode) => {
       const room = readLocalRoom(roomCode);
-      if (!room) {
+      if (!room || room.status !== "countdown") {
         return;
       }
 
       writeLocalRoom(roomCode, {
         ...room,
         status: "playing",
-      });
-    },
-    startSpin: async (roomCode, boostPower) => {
-      const room = readLocalRoom(roomCode);
-      if (!room || room.status !== "playing" || room.hostUid !== uid) {
-        return;
-      }
-
-      const now = Date.now();
-      const [boostId, boost] = createSpinBoost(uid, now, boostPower);
-      const recentBoosts = getRecentBoostEntries(room, MAX_SPIN_BOOSTS - 1);
-
-      writeLocalRoom(roomCode, {
-        ...room,
-        spinBoosts: {
-          ...Object.fromEntries(recentBoosts),
-          [boostId]: boost,
-        },
-        spinStartAt: room.spinStartAt ?? now,
-      });
-    },
-    updateDartAim: async (roomCode, aim) => {
-      const room = readLocalRoom(roomCode);
-      if (!room || room.status !== "playing") {
-        return;
-      }
-
-      const nextAims = { ...(room.dartAims ?? {}) };
-      if (aim) {
-        nextAims[uid] = aim;
-      } else {
-        delete nextAims[uid];
-      }
-
-      writeLocalRoom(roomCode, {
-        ...room,
-        dartAims: nextAims,
-      });
-    },
-    throwDart: async (roomCode, nickname, throwEntry) => {
-      const room = readLocalRoom(roomCode);
-      if (!room || room.status !== "playing" || !room.spinStartAt || room.throws?.[uid]) {
-        return;
-      }
-
-      if (!canThrowAtSpeed(room.spinStartAt, Date.now(), room.spinBoosts)) {
-        return;
-      }
-
-      writeLocalRoom(roomCode, {
-        ...room,
-        dartAims: Object.fromEntries(Object.entries(room.dartAims ?? {}).filter(([aimUid]) => aimUid !== uid)),
-        throws: {
-          ...(room.throws ?? {}),
-          [uid]: {
-            aimOffset: throwEntry?.aimOffset ?? 0,
-            charge: throwEntry?.charge ?? 1,
-            launchedAt: throwEntry?.launchedAt ?? Date.now(),
-            nickname,
-            throwAt: throwEntry?.throwAt ?? Date.now(),
-          },
-        },
+        raceStartedAt: Date.now(),
       });
     },
     finishGame: async (roomCode, result) => {
       const room = readLocalRoom(roomCode);
-      if (!room) {
+      if (!room || room.status !== "playing") {
         return;
       }
 
@@ -553,7 +484,7 @@ const createLocalStore = (): RoomStore => {
     },
     resetRoom: async (roomCode) => {
       const room = readLocalRoom(roomCode);
-      if (!room) {
+      if (!room || room.hostUid !== uid) {
         return;
       }
 
@@ -561,11 +492,14 @@ const createLocalStore = (): RoomStore => {
         ...room,
         status: "lobby",
         startAt: null,
-        spinStartAt: null,
-        spinBoosts: {},
+        raceStartedAt: null,
+        finalists: [],
+        raceEvents: [],
+        result: null,
         throws: {},
         dartAims: {},
-        result: null,
+        spinStartAt: null,
+        spinBoosts: {},
       });
     },
   };

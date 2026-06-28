@@ -7,11 +7,13 @@
     "dev": "vite --host 127.0.0.1",
     "dev:server": "node scripts/dev-server.mjs",
     "build": "tsc && vite build",
+    "deploy": "npm run build && firebase deploy --only hosting",
+    "deploy:preview": "npm run build && firebase hosting:channel:deploy preview",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.0.0",
-    "firebase": "^12.0.0",
+    "firebase": "^12.15.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "typescript": "^5.8.0",
@@ -19,6 +21,7 @@
   },
   "devDependencies": {
     "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3"
+    "@types/react-dom": "^19.2.3",
+    "firebase-tools": "^15.22.3"
   }
 }

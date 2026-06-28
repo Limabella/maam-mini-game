@@ -22,6 +22,37 @@ export type Player = {
   joinedAt: number;
 };
 
+export type MenuVoteEntry = {
+  menuIds: string[];
+  nickname: string;
+  updatedAt: number;
+};
+
+export type RaceEventType = "chopsticks" | "reverse-belt" | "green-tea";
+
+export type RaceEvent = {
+  id: string;
+  type: RaceEventType;
+  triggerAtMs: number;
+  durationMs: number;
+  laneIndex: number | null;
+  menuId?: string;
+  penaltyMs: number;
+  affectsAll?: boolean;
+  eliminates?: boolean;
+};
+
+export type RaceResultRankEntry = {
+  rank: number;
+  menuId: string;
+  menuName: string;
+  characterId: string;
+  characterName: string;
+  finishMs: number;
+  penaltyMs: number;
+  eliminated?: boolean;
+};
+
 export type ThrowEntry = {
   aimOffset?: number;
   charge?: number;
@@ -60,6 +91,10 @@ export type ResultEntry = {
   winnerNickname: string;
   errorDeg: number;
   rankings: ResultRankEntry[];
+  characterId?: string;
+  characterName?: string;
+  finishMs?: number;
+  raceRankings?: RaceResultRankEntry[];
 };
 
 export type RoomState = {
@@ -68,11 +103,16 @@ export type RoomState = {
   createdAt: number;
   seed: number;
   startAt: number | null;
-  spinStartAt?: number | null;
-  spinBoosts?: Record<string, SpinBoostEntry>;
+  spinStartAt: number | null;
+  spinBoosts: Record<string, SpinBoostEntry>;
   wheelSpeed: number;
   menuCards: string[];
   players: Record<string, Player>;
+  votes?: Record<string, MenuVoteEntry>;
+  finalists?: string[];
+  raceEvents?: RaceEvent[];
+  raceStartedAt?: number | null;
+  raceDurationMs?: number;
   dartAims?: Record<string, DartAimEntry>;
   throws?: Record<string, ThrowEntry>;
   result?: ResultEntry | null;
