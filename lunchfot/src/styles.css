@@ -1100,6 +1100,72 @@ input:focus {
     0 28px 86px rgba(0, 0, 0, 0.34);
 }
 
+.countdown-number--word {
+  font-size: clamp(48px, 13vw, 86px);
+}
+
+.race-loading-stage {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(255, 246, 220, 0.22), transparent 42%),
+    rgba(6, 12, 24, 0.26);
+}
+
+.race-loading-logo {
+  width: min(34vw, 190px);
+  padding: 8px 12px;
+}
+
+.race-loading-runway {
+  position: relative;
+  width: min(76vw, 640px);
+  height: min(36vw, 250px);
+  min-height: 180px;
+}
+
+.loading-bot-runner {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.loading-bot-runner canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.race-loading-dots {
+  position: absolute;
+  left: 50%;
+  bottom: 22%;
+  z-index: 1;
+  display: flex;
+  gap: 24px;
+  transform: translateX(-50%);
+}
+
+.race-loading-dots span {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff8dc;
+  box-shadow:
+    0 0 0 5px rgba(15, 23, 42, 0.18),
+    0 10px 24px rgba(0, 0, 0, 0.22);
+  animation: loading-dot-pulse 1.2s ease-in-out infinite;
+}
+
+.race-loading-dots span:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.race-loading-dots span:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
 .race-stage {
   width: 100%;
   min-height: 100vh;
@@ -1229,7 +1295,7 @@ input:focus {
     0 16px 30px rgba(23, 13, 5, 0.42),
     inset 0 2px 0 rgba(255, 244, 214, 0.65),
     inset 0 -7px 10px rgba(66, 36, 8, 0.42);
-  animation: race-rail-flow 1.45s linear infinite;
+  animation: race-rail-flow 3.625s linear infinite;
 }
 
 .race-rail-object--top {
@@ -1781,6 +1847,19 @@ input:focus {
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes loading-dot-pulse {
+  0%,
+  100% {
+    opacity: 0.58;
+    transform: translateY(0) scale(0.92);
+  }
+
+  50% {
+    opacity: 1;
+    transform: translateY(-5px) scale(1.08);
   }
 }
 

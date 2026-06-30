@@ -4,8 +4,8 @@ import type { RaceEvent, RaceEventType, RaceResultRankEntry, ResultEntry, RoomSt
 
 export const FINALIST_COUNT = 5;
 export const VOTE_LIMIT = 5;
-export const RACE_MIN_DURATION_MS = 30_000;
-export const RACE_MAX_DURATION_MS = 180_000;
+export const RACE_MIN_DURATION_MS = 42_000;
+export const RACE_MAX_DURATION_MS = 53_000;
 
 export type VoteTally = {
   menuId: string;
@@ -198,13 +198,14 @@ export const getRaceLaneStates = (room: RoomState, now: number): RaceLaneState[]
     const racer = getRacerForMenu(menuId);
     const eliminationEvent = getEliminationEvent(room, laneIndex, elapsedMs);
     const visibleElapsed = eliminationEvent ? eliminationEvent.triggerAtMs : elapsedMs;
-    const penaltyMs = getLanePenaltyMs(room, laneIndex, visibleElapsed);
     const baseFinishMs = getRaceBaseFinishMs(room, menuId, laneIndex);
     const finishMs = eliminationEvent ? Number.POSITIVE_INFINITY : baseFinishMs + getLanePenaltyMs(room, laneIndex);
-    const effectiveElapsed = Math.max(0, visibleElapsed - penaltyMs);
-    const rawProgress = eliminationEvent ? Math.min(0.985, effectiveElapsed / Math.max(1, baseFinishMs)) : Math.min(1, effectiveElapsed / Math.max(1, baseFinishMs));
-    const laneWave = Math.sin((elapsedMs / 520) + laneIndex * 1.4) * 0.006;
-    const displayProgress = Math.min(1, Math.max(0, rawProgress + (rawProgress < 1 ? laneWave : 0)));
+    const penaltyMs = getLanePenaltyMs(room, laneIndex, visibleElapsed);
+    const progressFinishMs = eliminationEvent ? baseFinishMs + penaltyMs : finishMs;
+    const rawProgress = eliminationEvent
+      ? Math.min(0.985, visibleElapsed / Math.max(1, progressFinishMs))
+      : Math.min(1, visibleElapsed / Math.max(1, progressFinishMs));
+    const displayProgress = rawProgress;
     const activeEventTypes = activeEvents
       .filter((event) => event.affectsAll || event.laneIndex === laneIndex)
       .map((event) => event.type);

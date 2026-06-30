@@ -46,6 +46,7 @@ const LOCAL_ROOM_PREFIX = "lunch-sushi-race:room:";
 const listeners = new Map<string, Set<(room: RoomState | null) => void>>();
 const CURRENT_MENU_IDS = menuCards.map((menu) => menu.id);
 const CURRENT_MENU_ID_SET = new Set(CURRENT_MENU_IDS);
+const RACE_COUNTDOWN_MS = 10_000;
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -153,7 +154,7 @@ const createRaceStartPatch = (room: RoomState) => {
   return {
     status: "countdown" as const,
     seed,
-    startAt: Date.now() + 3200,
+    startAt: Date.now() + RACE_COUNTDOWN_MS,
     raceStartedAt: null,
     raceDurationMs,
     finalists,

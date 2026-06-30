@@ -87,6 +87,125 @@ const getFoodImageUrl = (menu: MenuCard) => `/food/food_${getAssetStem(menu)}.pn
 
 const getRunnerImageUrl = (menu: MenuCard) => `/hero/runner_${getAssetStem(menu)}.png`;
 
+const getRaceModelUrl = (menuId: string) => {
+  const menuIndex = Math.max(0, menuCards.findIndex((menu) => menu.id === menuId));
+  return `/3d_glb/3m_${String(menuIndex + 1).padStart(3, "0")}.glb`;
+};
+
+type LoadedRaceModel = {
+  model: THREE.Group;
+  clips: THREE.AnimationClip[];
+};
+
+const selectRunningClips = (clips: THREE.AnimationClip[]) => {
+  if (!clips.length) {
+    return [];
+  }
+
+  const runningClip = clips.reduce((best, clip) =>
+    Math.abs(clip.duration - 1.25) < Math.abs(best.duration - 1.25) ? clip : best,
+  );
+  return [runningClip];
+};
+
+const raceModelCache = new Map<string, LoadedRaceModel>();
+const raceModelPromises = new Map<string, Promise<LoadedRaceModel>>();
+const LOADING_BOT_MODEL_URL = "/3d_glb/winlose_bgj.glb";
+let loadingBotModel: LoadedRaceModel | null = null;
+let loadingBotPromise: Promise<LoadedRaceModel> | null = null;
+
+const createLoadedRaceModel = (root: THREE.Object3D, clips: THREE.AnimationClip[]): LoadedRaceModel => {
+  root.traverse((child) => {
+    if (child instanceof THREE.Mesh) {
+      child.castShadow = true;
+      child.receiveShadow = true;
+    }
+  });
+
+  const box = new THREE.Box3().setFromObject(root);
+  const size = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  box.getSize(size);
+  box.getCenter(center);
+  const maxSize = Math.max(size.x, size.y, size.z) || 1;
+
+  const normalized = new THREE.Group();
+  root.position.set(-center.x, -box.min.y, -center.z);
+  normalized.add(root);
+  normalized.scale.setScalar(1 / maxSize);
+
+  return {
+    model: normalized,
+    clips: selectRunningClips(clips),
+  };
+};
+
+const loadRaceModel = (menuId: string) => {
+  const cachedModel = raceModelCache.get(menuId);
+
+  if (cachedModel) {
+    return Promise.resolve(cachedModel);
+  }
+
+  const loadingModel = raceModelPromises.get(menuId);
+
+  if (loadingModel) {
+    return loadingModel;
+  }
+
+  const promise = new Promise<LoadedRaceModel>((resolve, reject) => {
+    new GLTFLoader().load(
+      getRaceModelUrl(menuId),
+      (gltf) => {
+        const loadedModel = createLoadedRaceModel(gltf.scene, gltf.animations);
+        raceModelCache.set(menuId, loadedModel);
+        raceModelPromises.delete(menuId);
+        resolve(loadedModel);
+      },
+      undefined,
+      (error) => {
+        raceModelPromises.delete(menuId);
+        reject(error);
+      },
+    );
+  });
+
+  raceModelPromises.set(menuId, promise);
+  return promise;
+};
+
+const loadLoadingBotModel = () => {
+  if (loadingBotModel) {
+    return Promise.resolve(loadingBotModel);
+  }
+
+  if (loadingBotPromise) {
+    return loadingBotPromise;
+  }
+
+  loadingBotPromise = new Promise<LoadedRaceModel>((resolve, reject) => {
+    new GLTFLoader().load(
+      LOADING_BOT_MODEL_URL,
+      (gltf) => {
+        loadingBotModel = createLoadedRaceModel(gltf.scene, gltf.animations);
+        loadingBotPromise = null;
+        resolve(loadingBotModel);
+      },
+      undefined,
+      (error) => {
+        loadingBotPromise = null;
+        reject(error);
+      },
+    );
+  });
+
+  return loadingBotPromise;
+};
+
+const preloadRaceModels = (menuIds: string[]) => {
+  return Promise.all(menuIds.map((menuId) => loadRaceModel(menuId)));
+};
+
 type GamePhaseId = "sushi" | "pending" | "dart";
 
 type FlowStepId = "main" | "game-select" | "vote-select" | "playing" | "result";
@@ -442,17 +561,19 @@ type GameRoomProps = {
 function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRoomProps) {
   const now = useNow(room.status === "countdown" || room.status === "playing");
   const prevStatusRef = useRef(room.status);
+  const prevRaceVisibleRef = useRef(false);
+  const [raceModelsReady, setRaceModelsReady] = useState(false);
   const isHost = room.hostUid === currentUid;
-  const countdownLeft = Math.max(0, Math.ceil(((room.startAt ?? now) - now) / 1000));
   const finalistIds = room.finalists?.length ? room.finalists : selectFinalists(room);
+  const finalistKey = finalistIds.slice(0, FINALIST_COUNT).join("|");
 
   useEffect(() => {
-    if (!isHost || room.status !== "countdown" || !room.startAt || now < room.startAt) {
+    if (!isHost || room.status !== "countdown" || !room.startAt || now < room.startAt || !raceModelsReady) {
       return;
     }
 
     store.setPlaying(roomCode).catch(console.error);
-  }, [isHost, now, room.startAt, room.status, roomCode, store]);
+  }, [isHost, now, raceModelsReady, room.startAt, room.status, roomCode, store]);
 
   useEffect(() => {
     if (!isHost || room.status !== "playing" || !room.raceStartedAt || !hasRaceWinner(room, now)) {
@@ -463,7 +584,9 @@ function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRo
   }, [isHost, now, room, room.status, roomCode, store]);
 
   useEffect(() => {
-    if (room.status === "playing" && prevStatusRef.current !== "playing") {
+    const isRaceVisible = room.status === "playing" && raceModelsReady;
+
+    if (isRaceVisible && !prevRaceVisibleRef.current) {
       audio.playSpin(1.2);
     }
 
@@ -471,8 +594,35 @@ function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRo
       audio.playResult();
     }
 
+    prevRaceVisibleRef.current = isRaceVisible;
     prevStatusRef.current = room.status;
-  }, [audio, room.result, room.status]);
+  }, [audio, raceModelsReady, room.result, room.status]);
+
+  useEffect(() => {
+    if (room.status !== "countdown" && room.status !== "playing") {
+      setRaceModelsReady(false);
+      return;
+    }
+
+    let cancelled = false;
+    setRaceModelsReady(false);
+    Promise.all([preloadRaceModels(finalistIds.slice(0, FINALIST_COUNT)), loadLoadingBotModel()])
+      .then(() => {
+        if (!cancelled) {
+          setRaceModelsReady(true);
+        }
+      })
+      .catch((error) => {
+        console.error(error);
+        if (!cancelled) {
+          setRaceModelsReady(true);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [finalistKey, room.status]);
 
   const handleStart = () => {
     audio.arm();
@@ -484,16 +634,13 @@ function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRo
     store.resetRoom(roomCode).catch(console.error);
   };
 
-  if (room.status === "countdown") {
-    return (
-      <section className="countdown-stage">
-        <img className="countdown-logo" src="/other/maam-food-logo.png" alt="MaAM Food" />
-        <div className="countdown-number">{countdownLeft || "GO"}</div>
-      </section>
-    );
+  const isRacePreparing = room.status === "countdown" || (room.status === "playing" && !raceModelsReady);
+
+  if (isRacePreparing) {
+    return <RaceLoadingStage />;
   }
 
-  if (room.status === "playing") {
+  if (room.status === "playing" && raceModelsReady) {
     return (
       <section className="stage race-stage">
         <ThreeSushiRaceTrack room={room} now={now} />
@@ -558,6 +705,126 @@ function RoomSummary({ room, roomCode }: RoomSummaryProps) {
       </button>
     </section>
   );
+}
+
+function RaceLoadingStage() {
+  return (
+    <section className="countdown-stage race-loading-stage" aria-label="Loading race assets">
+      <img className="countdown-logo race-loading-logo" src="/other/maam-food-logo.png" alt="MaAM Food" />
+      <div className="race-loading-runway">
+        <LoadingBotRunner />
+        <div className="race-loading-dots" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function LoadingBotRunner() {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) {
+      return;
+    }
+
+    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    host.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.OrthographicCamera(-2.35, 2.35, 1.35, -1.15, 0.1, 20);
+    camera.position.set(0, 0.95, 5);
+    camera.lookAt(0, 0.38, 0);
+
+    const ambient = new THREE.HemisphereLight(0xfff8dc, 0x0f172a, 2.4);
+    scene.add(ambient);
+
+    const key = new THREE.DirectionalLight(0xffffff, 3.4);
+    key.position.set(1.4, 3.2, 4.2);
+    key.castShadow = true;
+    scene.add(key);
+
+    const fill = new THREE.DirectionalLight(0xfbbf24, 1.2);
+    fill.position.set(-2.8, 1.8, 2.4);
+    scene.add(fill);
+
+    let runner: THREE.Group | null = null;
+    let mixer: THREE.AnimationMixer | null = null;
+    let cancelled = false;
+    let frameId = 0;
+    let previousFrameTime = performance.now();
+
+    const resize = () => {
+      const rect = host.getBoundingClientRect();
+      renderer.setSize(Math.max(240, Math.round(rect.width)), Math.max(160, Math.round(rect.height)), false);
+    };
+
+    const renderFrame = (frameTime: number) => {
+      if (cancelled) {
+        return;
+      }
+
+      const delta = Math.min(0.05, Math.max(0, (frameTime - previousFrameTime) / 1000));
+      previousFrameTime = frameTime;
+      const progress = (frameTime % 2600) / 2600;
+
+      if (runner) {
+        runner.position.set(-1.75 + progress * 3.5, -0.36 + Math.sin(frameTime / 120) * 0.025, 0);
+        runner.rotation.z = Math.sin(frameTime / 150) * 0.035;
+      }
+
+      mixer?.update(delta);
+      renderer.render(scene, camera);
+      frameId = window.requestAnimationFrame(renderFrame);
+    };
+
+    resize();
+    window.addEventListener("resize", resize);
+
+    loadLoadingBotModel()
+      .then((loadedModel) => {
+        if (cancelled) {
+          return;
+        }
+
+        runner = cloneSkeleton(loadedModel.model) as THREE.Group;
+        runner.scale.setScalar(1.15);
+        runner.rotation.y = 0;
+        scene.add(runner);
+
+        if (loadedModel.clips.length) {
+          mixer = new THREE.AnimationMixer(runner);
+          loadedModel.clips.forEach((clip) => {
+            const action = mixer?.clipAction(clip);
+            action?.setEffectiveTimeScale(1.18);
+            action?.play();
+          });
+        }
+      })
+      .catch(console.error);
+
+    frameId = window.requestAnimationFrame(renderFrame);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("resize", resize);
+      window.cancelAnimationFrame(frameId);
+      renderer.dispose();
+      if (renderer.domElement.parentElement === host) {
+        host.removeChild(renderer.domElement);
+      }
+    };
+  }, []);
+
+  return <div className="loading-bot-runner" ref={hostRef} />;
 }
 
 type PlayerListProps = {
@@ -1047,8 +1314,7 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
   const cameraRef = useRef<THREE.OrthographicCamera | null>(null);
   const trackGroupRef = useRef<THREE.Group | null>(null);
   const racerGroupRef = useRef<THREE.Group | null>(null);
-  const modelRef = useRef<THREE.Group | null>(null);
-  const animationClipsRef = useRef<THREE.AnimationClip[]>([]);
+  const modelCacheRef = useRef<Map<string, LoadedRaceModel>>(new Map());
   const animationMixersRef = useRef<THREE.AnimationMixer[]>([]);
   const racerObjectsRef = useRef<
     Map<
@@ -1116,40 +1382,6 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
       frameId = window.requestAnimationFrame(renderFrame);
     };
 
-    new GLTFLoader().load(
-      "/3d_glb/001.glb",
-      (gltf) => {
-        if (cancelled) {
-          return;
-        }
-
-        const root = gltf.scene;
-        root.traverse((child) => {
-          if (child instanceof THREE.Mesh) {
-            child.castShadow = true;
-            child.receiveShadow = true;
-          }
-        });
-
-        const box = new THREE.Box3().setFromObject(root);
-        const size = new THREE.Vector3();
-        const center = new THREE.Vector3();
-        box.getSize(size);
-        box.getCenter(center);
-        const maxSize = Math.max(size.x, size.y, size.z) || 1;
-
-        const normalized = new THREE.Group();
-        root.position.set(-center.x, -box.min.y, -center.z);
-        normalized.add(root);
-        normalized.scale.setScalar(1 / maxSize);
-        modelRef.current = normalized;
-        animationClipsRef.current = gltf.animations[2] ? [gltf.animations[2]] : gltf.animations.slice(0, 1);
-        setModelReady((tick) => tick + 1);
-      },
-      undefined,
-      console.error,
-    );
-
     frameId = window.requestAnimationFrame(renderFrame);
 
     return () => {
@@ -1162,12 +1394,46 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
       cameraRef.current = null;
       trackGroupRef.current = null;
       racerGroupRef.current = null;
-      modelRef.current = null;
-      animationClipsRef.current = [];
+      modelCacheRef.current.clear();
       animationMixersRef.current = [];
       racerObjectsRef.current.clear();
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let usedCachedModel = false;
+
+    menuIds.split("|").forEach((menuId) => {
+      if (!menuId || modelCacheRef.current.has(menuId)) {
+        return;
+      }
+
+      const cachedModel = raceModelCache.get(menuId);
+      if (cachedModel) {
+        modelCacheRef.current.set(menuId, cachedModel);
+        usedCachedModel = true;
+        return;
+      }
+
+      loadRaceModel(menuId)
+        .then((loadedModel) => {
+          if (!cancelled) {
+            modelCacheRef.current.set(menuId, loadedModel);
+            setModelReady((tick) => tick + 1);
+          }
+        })
+        .catch(console.error);
+    });
+
+    if (usedCachedModel) {
+      setModelReady((tick) => tick + 1);
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [menuIds]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -1176,9 +1442,15 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
     const camera = cameraRef.current;
     const trackGroup = trackGroupRef.current;
     const racerGroup = racerGroupRef.current;
-    const model = modelRef.current;
 
-    if (!host || !renderer || !scene || !camera || !trackGroup || !racerGroup || !model) {
+    if (!host || !renderer || !scene || !camera || !trackGroup || !racerGroup) {
+      return;
+    }
+
+    if (!laneStates.every((lane) => modelCacheRef.current.has(lane.menuId))) {
+      racerGroup.clear();
+      animationMixersRef.current = [];
+      racerObjectsRef.current.clear();
       return;
     }
 
@@ -1204,19 +1476,28 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
     const endX = 3.55;
     const railZs = [-1.72, 1.86];
     const railYOffsets = [0.18, 0];
+    const railShadowYOffsets = [0.14, 0];
 
     laneStates.forEach((lane, laneIndex) => {
       const railIndex = laneIndex % 2;
-      const stackOffset = (Math.floor(laneIndex / 2) - 1) * 0.18;
+      const laneSlot = Math.floor(laneIndex / 2);
+      const stackOffset = (laneSlot - 1) * 0.46;
       const x = startX + lane.displayProgress * Math.max(1, endX - startX);
       const z = railZs[railIndex] + stackOffset;
       const bob = lane.isEliminated ? 0 : Math.sin(now / 115 + laneIndex) * 0.055;
-      const runner = cloneSkeleton(model) as THREE.Group;
-      runner.scale.multiplyScalar(width < 760 ? 0.92 : 1.12);
+      const loadedModel = modelCacheRef.current.get(lane.menuId);
+
+      if (!loadedModel) {
+        return;
+      }
+
+      const runner = cloneSkeleton(loadedModel.model) as THREE.Group;
+      runner.renderOrder = 10 + railIndex * 10 + laneSlot;
+      runner.scale.multiplyScalar(width < 760 ? 0.736 : 0.896);
       runner.position.set(x, 0.16 + railYOffsets[railIndex] + bob, z);
       runner.rotation.y = 0;
       runner.rotation.z = Math.sin(now / 180 + laneIndex) * 0.04;
-      animationClipsRef.current.forEach((clip) => {
+      loadedModel.clips.forEach((clip) => {
         const mixer = new THREE.AnimationMixer(runner);
         const action = mixer.clipAction(clip);
         action.timeScale = 1.15;
@@ -1231,9 +1512,10 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
       });
 
       const shadow = new THREE.Mesh(new THREE.CircleGeometry(0.42, 32), shadowMaterial);
+      shadow.renderOrder = runner.renderOrder - 1;
       shadow.rotation.x = -Math.PI / 2;
-      shadow.position.set(x, 0.02, z);
-      shadow.scale.set(1.4, 0.52, 1);
+      shadow.position.set(x, 0.02 + railShadowYOffsets[railIndex], z);
+      shadow.scale.set(1.12, 0.42, 1);
       racerGroup.add(shadow, runner);
       racerObjectsRef.current.set(lane.menuId, { laneIndex, runner, shadow });
     });
@@ -1266,6 +1548,7 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
     const endX = 3.55;
     const railZs = [-1.72, 1.86];
     const railYOffsets = [0.18, 0];
+    const railShadowYOffsets = [0.14, 0];
 
     laneStates.forEach((lane, laneIndex) => {
       const racer = racerObjectsRef.current.get(lane.menuId);
@@ -1274,7 +1557,8 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
       }
 
       const railIndex = laneIndex % 2;
-      const stackOffset = (Math.floor(laneIndex / 2) - 1) * 0.18;
+      const laneSlot = Math.floor(laneIndex / 2);
+      const stackOffset = (laneSlot - 1) * 0.46;
       const x = startX + lane.displayProgress * Math.max(1, endX - startX);
       const z = railZs[railIndex] + stackOffset;
       const bob = lane.isEliminated ? 0 : Math.sin(now / 115 + laneIndex) * 0.055;
@@ -1283,7 +1567,7 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
       racer.runner.position.set(x, 0.16 + railYOffsets[railIndex] + bob, z);
       racer.runner.rotation.z = Math.sin(now / 180 + laneIndex) * 0.04;
       racer.runner.visible = visible;
-      racer.shadow.position.set(x, 0.02, z);
+      racer.shadow.position.set(x, 0.02 + railShadowYOffsets[railIndex], z);
       racer.shadow.visible = visible;
     });
   }, [laneStates, modelReady, now]);

@@ -65,5 +65,6 @@ npx firebase-tools deploy --only hosting --project burger-910f0
 
 ## Planned Work
 
+- Remove result-screen character and add food information
 - Event motion effects
 - Running 3D model refinements, motion variants, and effects
