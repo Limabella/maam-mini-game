@@ -740,9 +740,9 @@ function LoadingBotRunner() {
     host.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-    const camera = new THREE.OrthographicCamera(-2.35, 2.35, 1.35, -1.15, 0.1, 20);
-    camera.position.set(0, 0.95, 5);
-    camera.lookAt(0, 0.38, 0);
+    const camera = new THREE.OrthographicCamera(-2.8, 2.8, 1.25, -1.05, 0.1, 20);
+    camera.position.set(0, 0.9, 5);
+    camera.lookAt(0, 0.18, 0);
 
     const ambient = new THREE.HemisphereLight(0xfff8dc, 0x0f172a, 2.4);
     scene.add(ambient);
@@ -774,11 +774,11 @@ function LoadingBotRunner() {
 
       const delta = Math.min(0.05, Math.max(0, (frameTime - previousFrameTime) / 1000));
       previousFrameTime = frameTime;
-      const progress = (frameTime % 2600) / 2600;
+      const progress = (frameTime % 1650) / 1650;
 
       if (runner) {
-        runner.position.set(-1.75 + progress * 3.5, -0.36 + Math.sin(frameTime / 120) * 0.025, 0);
-        runner.rotation.z = Math.sin(frameTime / 150) * 0.035;
+        runner.position.set(-2.15 + progress * 4.3, -0.55 + Math.sin(frameTime / 92) * 0.018, 0);
+        runner.rotation.z = Math.sin(frameTime / 105) * 0.025;
       }
 
       mixer?.update(delta);
@@ -796,7 +796,7 @@ function LoadingBotRunner() {
         }
 
         runner = cloneSkeleton(loadedModel.model) as THREE.Group;
-        runner.scale.setScalar(1.15);
+        runner.scale.setScalar(0.36);
         runner.rotation.y = 0;
         scene.add(runner);
 
@@ -804,7 +804,7 @@ function LoadingBotRunner() {
           mixer = new THREE.AnimationMixer(runner);
           loadedModel.clips.forEach((clip) => {
             const action = mixer?.clipAction(clip);
-            action?.setEffectiveTimeScale(1.18);
+            action?.setEffectiveTimeScale(1.85);
             action?.play();
           });
         }

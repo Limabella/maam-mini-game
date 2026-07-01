@@ -1120,8 +1120,8 @@ input:focus {
 .race-loading-runway {
   position: relative;
   width: min(76vw, 640px);
-  height: min(36vw, 250px);
-  min-height: 180px;
+  height: min(28vw, 190px);
+  min-height: 136px;
 }
 
 .loading-bot-runner {
@@ -1140,16 +1140,16 @@ input:focus {
 .race-loading-dots {
   position: absolute;
   left: 50%;
-  bottom: 22%;
+  bottom: 28%;
   z-index: 1;
   display: flex;
-  gap: 24px;
+  gap: 20px;
   transform: translateX(-50%);
 }
 
 .race-loading-dots span {
-  width: 18px;
-  height: 18px;
+  width: 15px;
+  height: 15px;
   border-radius: 50%;
   background: #fff8dc;
   box-shadow:
