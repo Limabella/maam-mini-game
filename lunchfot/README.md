@@ -13,7 +13,7 @@ LunchFot is a real-time lunch selection mini game. Players create or join a room
 - Room creation and join flow with shareable room URLs
 - Firebase Realtime Database support with local demo fallback
 - Food vote selection using 20 menu images
-- Focused countdown transition screen
+- Loading transition with a running GLB bot
 - 3D GLB character race powered by Three.js
 - Animated conveyor rail objects with independent lane flow
 - NTR-N finish mascot at the finish zone
@@ -58,7 +58,8 @@ npx firebase-tools deploy --only hosting --project burger-910f0
 
 ## Assets
 
-- Runtime 3D model: `public/3d_glb/001.glb`
+- Menu racer GLBs: `public/3d_glb/3m_001.glb` through `public/3d_glb/3m_020.glb`
+- Loading runner GLB: `public/3d_glb/winlose_bgj.glb`
 - Race rail texture: `public/other/rail_lane_tile.png`
 - Finish mascot: `public/other/finish_ntr_flag.png`
 - Work-in-progress authoring assets under `public/character_assets/` are ignored by Git.

@@ -4,8 +4,8 @@ import type { RaceEvent, RaceEventType, RaceResultRankEntry, ResultEntry, RoomSt
 
 export const FINALIST_COUNT = 5;
 export const VOTE_LIMIT = 5;
-export const RACE_MIN_DURATION_MS = 42_000;
-export const RACE_MAX_DURATION_MS = 53_000;
+export const RACE_MIN_DURATION_MS = 32_000;
+export const RACE_MAX_DURATION_MS = 41_000;
 
 export type VoteTally = {
   menuId: string;
@@ -118,19 +118,17 @@ export const createRaceEvents = (finalists: string[], seed: number, durationMs: 
     },
   ];
 
-  if (playerCount > 2) {
-    const chopstickLane = pickLane();
-    events.push({
-      id: "chopsticks-1",
-      type: "chopsticks",
-      triggerAtMs: clampTrigger(durationMs * 0.68 + jitter()),
-      durationMs: 2400,
-      laneIndex: chopstickLane,
-      menuId: finalists[chopstickLane] ?? finalists[0],
-      penaltyMs: 0,
-      eliminates: true,
-    });
-  }
+  const chopstickLane = pickLane();
+  events.push({
+    id: "chopsticks-1",
+    type: "chopsticks",
+    triggerAtMs: clampTrigger(durationMs * (playerCount > 2 ? 0.68 : 0.58) + jitter()),
+    durationMs: 2800,
+    laneIndex: chopstickLane,
+    menuId: finalists[chopstickLane] ?? finalists[0],
+    penaltyMs: 0,
+    eliminates: true,
+  });
 
   return events.sort((a, b) => a.triggerAtMs - b.triggerAtMs);
 };
@@ -181,7 +179,7 @@ export const getActiveRaceEvents = (room: RoomState, now: number) => {
     return [];
   }
 
-  const elapsedMs = now - startedAt;
+  const elapsedMs = Math.max(0, now - startedAt);
   return (room.raceEvents ?? []).filter(
     (event) => elapsedMs >= event.triggerAtMs && elapsedMs <= event.triggerAtMs + event.durationMs,
   );
@@ -304,7 +302,7 @@ export const calculateRaceResult = (room: RoomState): ResultEntry => {
 
 export const formatRaceTime = (valueMs: number) => {
   if (!Number.isFinite(valueMs)) {
-    return "탈락";
+    return "Out";
   }
 
   return `${(valueMs / 1000).toFixed(2)}s`;

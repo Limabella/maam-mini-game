@@ -1120,8 +1120,8 @@ input:focus {
 .race-loading-runway {
   position: relative;
   width: min(76vw, 640px);
-  height: min(28vw, 190px);
-  min-height: 136px;
+  height: min(25vw, 170px);
+  min-height: 128px;
 }
 
 .loading-bot-runner {
@@ -1140,7 +1140,7 @@ input:focus {
 .race-loading-dots {
   position: absolute;
   left: 50%;
-  bottom: 28%;
+  bottom: 20%;
   z-index: 1;
   display: flex;
   gap: 20px;
@@ -1295,7 +1295,7 @@ input:focus {
     0 16px 30px rgba(23, 13, 5, 0.42),
     inset 0 2px 0 rgba(255, 244, 214, 0.65),
     inset 0 -7px 10px rgba(66, 36, 8, 0.42);
-  animation: race-rail-flow 3.625s linear infinite;
+  animation: race-rail-flow 12.1s linear infinite;
 }
 
 .race-rail-object--top {
@@ -1320,6 +1320,27 @@ input:focus {
   transform: translateY(-52%);
   background: url("/other/finish_ntr_flag.png") center / contain no-repeat;
   filter: drop-shadow(0 16px 24px rgba(18, 10, 4, 0.5));
+}
+
+.race-hand-event {
+  position: absolute;
+  left: var(--hand-x);
+  top: var(--hand-y);
+  z-index: 4;
+  width: clamp(128px, 12vw, 230px);
+  aspect-ratio: 2 / 3;
+  opacity: var(--hand-opacity);
+  transform:
+    translate(-8%, -92%)
+    rotate(var(--hand-rotate))
+    scale(var(--hand-scale));
+  transform-origin: 8% 92%;
+  background: url("/other/hand.png") center / contain no-repeat;
+  filter:
+    drop-shadow(0 18px 24px rgba(18, 10, 4, 0.46))
+    drop-shadow(0 0 14px rgba(255, 197, 79, 0.22));
+  pointer-events: none;
+  will-change: left, top, transform, opacity;
 }
 
 @keyframes race-rail-flow {

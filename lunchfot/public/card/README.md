@@ -1,24 +1,28 @@
-이미지 파일은 이 폴더에 아래 이름으로 넣으면 앱에 자동 반영됩니다.
+Place menu card images in this folder using the expected file names.
 
-- `jeyuk.png`
-- `kimchi-stew.png`
-- `pork-cutlet.png`
-- `pho.png`
-- `bibimbap.png`
-- `naengmyeon.png`
-- `burger.png`
-- `salad.png`
-- `malatang.png`
-- `tteokbokki.png`
-- `sushi.png`
-- `pasta.png`
-- `curry.png`
-- `sundae-soup.png`
-- `ramen.png`
-- `kalguksu.png`
-- `sandwich.png`
-- `budae-stew.png`
-- `hoe-deopbap.png`
-- `taco.png`
+The app reads these files directly:
 
-권장 비율은 4:3 또는 1:1입니다. 파일이 없으면 내장 SVG 대체 이미지가 표시됩니다.
+```txt
+001_kmj.png
+002_dnj.png
+003_bbp.png
+004_sdf.png
+005_jyk.png
+006_dks.png
+007_gks.png
+008_nmy.png
+009_sgs.png
+010_dgb.png
+011_pho.png
+012_mlt.png
+013_sdb.png
+014_sns.png
+015_sro.png
+016_udn.png
+017_crr.png
+018_hbg.png
+019_dnb.png
+020_bnt.png
+```
+
+Use a 4:3 or 1:1 ratio when possible. If a file is missing, the app displays a built-in SVG fallback image.

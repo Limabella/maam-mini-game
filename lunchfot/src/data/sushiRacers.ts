@@ -11,33 +11,33 @@ export type SushiRacer = {
 };
 
 export const MENU_DISPLAY_NAMES: Record<string, string> = {
-  "kmj-lm": "김치찌개",
-  "dnj-lm": "된장찌개",
-  "bbp-lm": "비빔밥",
-  "sdf-lm": "순두부찌개",
-  "jyk-lm": "제육볶음",
-  "dks-lm": "돈까스",
-  "gks-lm": "국수",
-  "nmy-lm": "냉면",
-  "sgs-lm": "삼겹살 구이",
-  "dgb-lm": "닭갈비",
-  "pho-lm": "쌀국수",
-  "mlt-lm": "마라탕",
-  "sdb-lm": "샐러드 보울",
-  "sns-lm": "샌드위치 & 수프",
-  "sro-lm": "초밥·롤",
-  "udn-lm": "우동",
-  "crr-lm": "카레라이스",
-  "hbg-lm": "햄버거 세트",
-  "dnb-lm": "덮밥",
-  "bnt-lm": "도시락",
+  "kmj-lm": "Kimchi Stew",
+  "dnj-lm": "Doenjang Stew",
+  "bbp-lm": "Bibimbap",
+  "sdf-lm": "Soft Tofu Stew",
+  "jyk-lm": "Jeyuk Bokkeum",
+  "dks-lm": "Donkatsu",
+  "gks-lm": "Noodles",
+  "nmy-lm": "Cold Noodles",
+  "sgs-lm": "Grilled Pork Belly",
+  "dgb-lm": "Dakgalbi",
+  "pho-lm": "Pho",
+  "mlt-lm": "Malatang",
+  "sdb-lm": "Salad Bowl",
+  "sns-lm": "Sandwich & Soup",
+  "sro-lm": "Sushi Roll",
+  "udn-lm": "Udon",
+  "crr-lm": "Curry Rice",
+  "hbg-lm": "Burger Set",
+  "dnb-lm": "Rice Bowl",
+  "bnt-lm": "Lunchbox",
 };
 
 export const sushiRacers: SushiRacer[] = [
   {
     menuId: "kmj-lm",
     characterId: "racer-kimchi-flare",
-    characterName: "김치 플레어",
+    characterName: "Kimchi Flare",
     icon: "🔥",
     color: "#dc2626",
     accent: "#fecaca",
@@ -46,7 +46,7 @@ export const sushiRacers: SushiRacer[] = [
   {
     menuId: "dnj-lm",
     characterId: "racer-doenjang-guard",
-    characterName: "된장 가드",
+    characterName: "Doenjang Guard",
     icon: "🛡️",
     color: "#166534",
     accent: "#bbf7d0",
@@ -55,7 +55,7 @@ export const sushiRacers: SushiRacer[] = [
   {
     menuId: "bbp-lm",
     characterId: "racer-bibim-sprinter",
-    characterName: "비빔 스프린터",
+    characterName: "Bibim Sprinter",
     icon: "⚡",
     color: "#15803d",
     accent: "#bbf7d0",
@@ -64,8 +64,8 @@ export const sushiRacers: SushiRacer[] = [
   {
     menuId: "sdf-lm",
     characterId: "racer-soft-tofu",
-    characterName: "순두부 버블",
-    icon: "💭",
+    characterName: "Soft Tofu Bubble",
+    icon: "☁️",
     color: "#ea580c",
     accent: "#fed7aa",
     style: "slide",
@@ -73,7 +73,7 @@ export const sushiRacers: SushiRacer[] = [
   {
     menuId: "jyk-lm",
     characterId: "racer-jeyuk-rocket",
-    characterName: "제육 로켓",
+    characterName: "Jeyuk Rocket",
     icon: "🚀",
     color: "#b91c1c",
     accent: "#fecaca",
@@ -82,8 +82,8 @@ export const sushiRacers: SushiRacer[] = [
   {
     menuId: "dks-lm",
     characterId: "racer-tonkatsu-crunch",
-    characterName: "돈까스 크런치",
-    icon: "⭐",
+    characterName: "Donkatsu Crunch",
+    icon: "💥",
     color: "#a16207",
     accent: "#fde68a",
     style: "jump",
@@ -91,7 +91,7 @@ export const sushiRacers: SushiRacer[] = [
   {
     menuId: "gks-lm",
     characterId: "racer-noodle-loop",
-    characterName: "국수 루프",
+    characterName: "Noodle Loop",
     icon: "🌀",
     color: "#4d7c0f",
     accent: "#d9f99d",
@@ -100,7 +100,7 @@ export const sushiRacers: SushiRacer[] = [
   {
     menuId: "nmy-lm",
     characterId: "racer-cold-breeze",
-    characterName: "냉면 브리즈",
+    characterName: "Cold Breeze",
     icon: "❄️",
     color: "#0284c7",
     accent: "#bae6fd",
@@ -109,8 +109,8 @@ export const sushiRacers: SushiRacer[] = [
   {
     menuId: "sgs-lm",
     characterId: "racer-grill-king",
-    characterName: "삼겹 그릴러",
-    icon: "👑",
+    characterName: "Grill Runner",
+    icon: "🥓",
     color: "#57534e",
     accent: "#e7e5e4",
     style: "bounce",
@@ -118,8 +118,8 @@ export const sushiRacers: SushiRacer[] = [
   {
     menuId: "dgb-lm",
     characterId: "racer-dakgalbi-iron",
-    characterName: "닭갈비 아이언",
-    icon: "💥",
+    characterName: "Dakgalbi Iron",
+    icon: "🍗",
     color: "#7f1d1d",
     accent: "#fecaca",
     style: "jump",
@@ -127,7 +127,7 @@ export const sushiRacers: SushiRacer[] = [
   {
     menuId: "pho-lm",
     characterId: "racer-pho-wave",
-    characterName: "쌀국수 웨이브",
+    characterName: "Pho Wave",
     icon: "🌊",
     color: "#0f766e",
     accent: "#99f6e4",
@@ -136,7 +136,7 @@ export const sushiRacers: SushiRacer[] = [
   {
     menuId: "mlt-lm",
     characterId: "racer-mala-spark",
-    characterName: "마라 스파크",
+    characterName: "Mala Spark",
     icon: "🌶️",
     color: "#991b1b",
     accent: "#fed7aa",
@@ -145,8 +145,8 @@ export const sushiRacers: SushiRacer[] = [
   {
     menuId: "sdb-lm",
     characterId: "racer-salad-leaf",
-    characterName: "샐러드 리프",
-    icon: "🍃",
+    characterName: "Salad Leaf",
+    icon: "🥬",
     color: "#65a30d",
     accent: "#d9f99d",
     style: "bounce",
@@ -154,8 +154,8 @@ export const sushiRacers: SushiRacer[] = [
   {
     menuId: "sns-lm",
     characterId: "racer-sandwich-scout",
-    characterName: "샌드 스카우트",
-    icon: "🎯",
+    characterName: "Sandwich Scout",
+    icon: "🥪",
     color: "#3f6212",
     accent: "#fef08a",
     style: "jump",
@@ -163,7 +163,7 @@ export const sushiRacers: SushiRacer[] = [
   {
     menuId: "sro-lm",
     characterId: "racer-sushi-ninja",
-    characterName: "초밥 닌자",
+    characterName: "Sushi Ninja",
     icon: "🍣",
     color: "#0f766e",
     accent: "#99f6e4",
@@ -172,8 +172,8 @@ export const sushiRacers: SushiRacer[] = [
   {
     menuId: "udn-lm",
     characterId: "racer-udon-cloud",
-    characterName: "우동 클라우드",
-    icon: "☁️",
+    characterName: "Udon Cloud",
+    icon: "🍥",
     color: "#0369a1",
     accent: "#bae6fd",
     style: "slide",
@@ -181,7 +181,7 @@ export const sushiRacers: SushiRacer[] = [
   {
     menuId: "crr-lm",
     characterId: "racer-curry-comet",
-    characterName: "카레 코멧",
+    characterName: "Curry Comet",
     icon: "☄️",
     color: "#b45309",
     accent: "#fde68a",
@@ -190,7 +190,7 @@ export const sushiRacers: SushiRacer[] = [
   {
     menuId: "hbg-lm",
     characterId: "racer-burger-bolt",
-    characterName: "버거 볼트",
+    characterName: "Burger Bolt",
     icon: "🍔",
     color: "#ca8a04",
     accent: "#fde68a",
@@ -199,7 +199,7 @@ export const sushiRacers: SushiRacer[] = [
   {
     menuId: "dnb-lm",
     characterId: "racer-bowl-drift",
-    characterName: "덮밥 드리프트",
+    characterName: "Bowl Drift",
     icon: "🏁",
     color: "#1d4ed8",
     accent: "#bfdbfe",
@@ -208,8 +208,8 @@ export const sushiRacers: SushiRacer[] = [
   {
     menuId: "bnt-lm",
     characterId: "racer-bento-boxer",
-    characterName: "도시락 복서",
-    icon: "🥊",
+    characterName: "Lunchbox Boxer",
+    icon: "🍱",
     color: "#15803d",
     accent: "#bbf7d0",
     style: "jump",
@@ -226,5 +226,4 @@ export const getMenuDisplayName = (menu: MenuCard | undefined) => {
   return MENU_DISPLAY_NAMES[menu.id] ?? menu.name;
 };
 
-export const getRacerForMenu = (menuId: string) =>
-  sushiRacerByMenuId.get(menuId) ?? sushiRacers[0];
+export const getRacerForMenu = (menuId: string) => sushiRacerByMenuId.get(menuId) ?? sushiRacers[0];

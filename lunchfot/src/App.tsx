@@ -1,4 +1,4 @@
-import {
+﻿import {
   useEffect,
   useMemo,
   useRef,
@@ -51,18 +51,11 @@ const useNow = (active = true) => {
       return;
     }
 
-    let frame = 0;
-    const tick = () => {
-      setNow(Date.now());
-      frame = window.requestAnimationFrame(tick);
-    };
-
-    frame = window.requestAnimationFrame(tick);
-    const fallback = window.setInterval(() => setNow(Date.now()), 160);
+    setNow(Date.now());
+    const interval = window.setInterval(() => setNow(Date.now()), 80);
 
     return () => {
-      window.cancelAnimationFrame(frame);
-      window.clearInterval(fallback);
+      window.clearInterval(interval);
     };
   }, [active]);
 
@@ -87,6 +80,8 @@ const getFoodImageUrl = (menu: MenuCard) => `/food/food_${getAssetStem(menu)}.pn
 
 const getRunnerImageUrl = (menu: MenuCard) => `/hero/runner_${getAssetStem(menu)}.png`;
 
+const getResultCardImageUrl = (menu: MenuCard) => `/card/lf-card/${getAssetStem(menu)}_lf.png`;
+
 const getRaceModelUrl = (menuId: string) => {
   const menuIndex = Math.max(0, menuCards.findIndex((menu) => menu.id === menuId));
   return `/3d_glb/3m_${String(menuIndex + 1).padStart(3, "0")}.glb`;
@@ -95,6 +90,7 @@ const getRaceModelUrl = (menuId: string) => {
 type LoadedRaceModel = {
   model: THREE.Group;
   clips: THREE.AnimationClip[];
+  grabClip?: THREE.AnimationClip;
 };
 
 const selectRunningClips = (clips: THREE.AnimationClip[]) => {
@@ -106,6 +102,13 @@ const selectRunningClips = (clips: THREE.AnimationClip[]) => {
     Math.abs(clip.duration - 1.25) < Math.abs(best.duration - 1.25) ? clip : best,
   );
   return [runningClip];
+};
+
+const selectGrabClip = (clips: THREE.AnimationClip[], runningClips: THREE.AnimationClip[]) => {
+  const runningClip = runningClips[0];
+  return clips
+    .filter((clip) => clip !== runningClip)
+    .sort((a, b) => Math.abs(a.duration - 0.79) - Math.abs(b.duration - 0.79))[0];
 };
 
 const raceModelCache = new Map<string, LoadedRaceModel>();
@@ -134,9 +137,12 @@ const createLoadedRaceModel = (root: THREE.Object3D, clips: THREE.AnimationClip[
   normalized.add(root);
   normalized.scale.setScalar(1 / maxSize);
 
+  const runningClips = selectRunningClips(clips);
+
   return {
     model: normalized,
-    clips: selectRunningClips(clips),
+    clips: runningClips,
+    grabClip: selectGrabClip(clips, runningClips),
   };
 };
 
@@ -215,17 +221,17 @@ const GAME_PHASES: Array<{
   label: string;
   enabled: boolean;
 }> = [
-  { id: "sushi", label: "\ud68c\uc804 \ucd08\ubc25 \ub808\uc774\uc2a4", enabled: true },
-  { id: "pending", label: "\uc900\ube44\uc911", enabled: false },
-  { id: "dart", label: "\ub2e4\ud2b8 \uac8c\uc784", enabled: false },
+  { id: "sushi", label: "Conveyor Sushi Race", enabled: true },
+  { id: "pending", label: "Coming Soon", enabled: false },
+  { id: "dart", label: "Dart Game", enabled: false },
 ];
 
 const FLOW_STEPS: Record<FlowStepId, string> = {
   main: "main",
-  "game-select": "\uac8c\uc784\uc120\ud0dd",
-  "vote-select": "\ud22c\ud45c\uc120\ud0dd",
-  playing: "\uac8c\uc784\uc9c4\ud589",
-  result: "\uacb0\uacfc\ud654\uba74",
+  "game-select": "Game Select",
+  "vote-select": "Vote Select",
+  playing: "Race",
+  result: "Results",
 };
 
 const ROOM_STATUS_TO_STEP: Record<RoomStatus, FlowStepId> = {
@@ -238,9 +244,9 @@ const ROOM_STATUS_TO_STEP: Record<RoomStatus, FlowStepId> = {
 const getRoomStepLabel = (status: RoomStatus) => FLOW_STEPS[ROOM_STATUS_TO_STEP[status]];
 
 const RACE_EVENT_META: Record<RaceEventType, { icon: string; label: string }> = {
-  chopsticks: { icon: "🥢", label: "젓가락 탈락" },
-  "reverse-belt": { icon: "↩", label: "역주행 레일" },
-  "green-tea": { icon: "🍵", label: "녹차 미끄러짐" },
+  chopsticks: { icon: "🥢", label: "Hand Grab" },
+  "reverse-belt": { icon: "↩", label: "Reverse Rail" },
+  "green-tea": { icon: "🍵", label: "Green Tea Slip" },
 };
 
 function App() {
@@ -294,7 +300,7 @@ function App() {
       const nextRoomCode = await store.createRoom(activeNickname);
       navigateToRoom(nextRoomCode);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "방 생성에 실패했습니다.");
+      setMessage(error instanceof Error ? error.message : "Failed to create room.");
     } finally {
       setBusy(false);
     }
@@ -316,7 +322,7 @@ function App() {
       await store.joinRoom(normalizedCode, activeNickname);
       navigateToRoom(normalizedCode);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "입장에 실패했습니다.");
+      setMessage(error instanceof Error ? error.message : "Failed to join room.");
     } finally {
       setBusy(false);
     }
@@ -327,7 +333,7 @@ function App() {
       <main className="app-shell">
         <section className="panel centered">
           <div className="loader" />
-          <p>방 연결 준비 중</p>
+          <p>Preparing room connection</p>
         </section>
       </main>
     );
@@ -355,13 +361,13 @@ function App() {
           <button
             className={`icon-button sound-toggle${soundEnabled ? " is-on" : ""}`}
             type="button"
-            title={soundEnabled ? "사운드 끄기" : "사운드 켜기"}
+            title={soundEnabled ? "Mute sound" : "Enable sound"}
             onClick={() => {
               audio.arm();
               setSoundEnabled(!soundEnabled);
             }}
           >
-            {soundEnabled ? "♪" : "×"}
+            {soundEnabled ? "♪" : "♪"}
           </button>
           <span className={store.mode === "firebase" ? "mode live" : "mode"}>{store.mode}</span>
         </div>
@@ -390,7 +396,7 @@ function App() {
       )}
 
       {!hasFirebaseConfig && (
-        <p className="env-note">Firebase 환경변수가 없어서 이 브라우저의 로컬 데모 모드로 실행 중입니다.</p>
+        <p className="env-note">Firebase config is missing, so this browser is running in local demo mode.</p>
       )}
     </main>
   );
@@ -439,7 +445,7 @@ function HomeScreen({ busy, message, onCreateRoom, onJoinRoom }: HomeScreenProps
 
         <div className="home-menu" aria-label="Main menu">
           <button type="button" disabled={busy} onClick={() => setHomeMode("games")}>
-            {"\uac8c\uc784 \uc0dd\uc131"}
+            {"Create Game"}
           </button>
 
           {homeMode === "games" && (
@@ -463,7 +469,7 @@ function HomeScreen({ busy, message, onCreateRoom, onJoinRoom }: HomeScreenProps
           )}
 
           <button type="button" disabled={busy} onClick={() => setHomeMode("join")}>
-            {"\ubc29 \uc785\uc7a5"}
+            {"Join Room"}
           </button>
 
         </div>
@@ -483,7 +489,7 @@ function HomeScreen({ busy, message, onCreateRoom, onJoinRoom }: HomeScreenProps
               className="home-code-input"
               id="roomCode"
               maxLength={4}
-              placeholder={"\ubc29 \uc785\uc7a5 \ucf54\ub4dc"}
+              placeholder={"Room code"}
               value={joinCode}
               onChange={(event) => setJoinCode(event.target.value.toUpperCase())}
             />
@@ -523,7 +529,7 @@ type RoomGateProps = {
 function RoomGate({ busy, message, nickname, roomCode, setNickname, onJoinRoom }: RoomGateProps) {
   return (
     <section className="panel room-gate">
-      <p className="room-code-label">방 코드</p>
+      <p className="room-code-label">Room Code</p>
       <h1 className="room-code">{roomCode}</h1>
       <form
         className="join-form"
@@ -532,16 +538,16 @@ function RoomGate({ busy, message, nickname, roomCode, setNickname, onJoinRoom }
           void onJoinRoom(roomCode);
         }}
       >
-        <label htmlFor="gateNickname">닉네임</label>
+        <label htmlFor="gateNickname">Nickname</label>
         <input
           id="gateNickname"
           maxLength={12}
-          placeholder="예: Min"
+          placeholder="ex. Min"
           value={nickname}
           onChange={(event) => setNickname(event.target.value)}
         />
         <button className="primary-button" disabled={busy || !nickname.trim()} type="submit">
-          참가하기
+          Join
         </button>
       </form>
       {message && <p className="form-message">{message}</p>}
@@ -563,9 +569,16 @@ function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRo
   const prevStatusRef = useRef(room.status);
   const prevRaceVisibleRef = useRef(false);
   const [raceModelsReady, setRaceModelsReady] = useState(false);
+  const [raceVisualKey, setRaceVisualKey] = useState("");
+  const [raceVisualOffset, setRaceVisualOffset] = useState(0);
   const isHost = room.hostUid === currentUid;
   const finalistIds = room.finalists?.length ? room.finalists : selectFinalists(room);
   const finalistKey = finalistIds.slice(0, FINALIST_COUNT).join("|");
+  const currentRaceVisualKey = `${roomCode}:${room.seed}:${room.raceStartedAt ?? 0}`;
+
+  useEffect(() => {
+    loadLoadingBotModel().catch(console.error);
+  }, []);
 
   useEffect(() => {
     if (!isHost || room.status !== "countdown" || !room.startAt || now < room.startAt || !raceModelsReady) {
@@ -606,7 +619,7 @@ function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRo
 
     let cancelled = false;
     setRaceModelsReady(false);
-    Promise.all([preloadRaceModels(finalistIds.slice(0, FINALIST_COUNT)), loadLoadingBotModel()])
+    preloadRaceModels(finalistIds.slice(0, FINALIST_COUNT))
       .then(() => {
         if (!cancelled) {
           setRaceModelsReady(true);
@@ -624,6 +637,23 @@ function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRo
     };
   }, [finalistKey, room.status]);
 
+  useEffect(() => {
+    if (room.status !== "playing" || !room.raceStartedAt || !raceModelsReady) {
+      if (room.status !== "playing") {
+        setRaceVisualKey("");
+        setRaceVisualOffset(0);
+      }
+      return;
+    }
+
+    if (raceVisualKey === currentRaceVisualKey) {
+      return;
+    }
+
+    setRaceVisualKey(currentRaceVisualKey);
+    setRaceVisualOffset(Math.max(0, now - room.raceStartedAt));
+  }, [currentRaceVisualKey, now, raceModelsReady, raceVisualKey, room.raceStartedAt, room.status]);
+
   const handleStart = () => {
     audio.arm();
     audio.playGrab();
@@ -635,6 +665,10 @@ function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRo
   };
 
   const isRacePreparing = room.status === "countdown" || (room.status === "playing" && !raceModelsReady);
+  const raceVisualNow =
+    room.status === "playing" && room.raceStartedAt && raceVisualKey === currentRaceVisualKey
+      ? Math.max(room.raceStartedAt, now - raceVisualOffset)
+      : now;
 
   if (isRacePreparing) {
     return <RaceLoadingStage />;
@@ -643,7 +677,7 @@ function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRo
   if (room.status === "playing" && raceModelsReady) {
     return (
       <section className="stage race-stage">
-        <ThreeSushiRaceTrack room={room} now={now} />
+        <ThreeSushiRaceTrack room={room} now={raceVisualNow} />
       </section>
     );
   }
@@ -693,14 +727,14 @@ function RoomSummary({ room, roomCode }: RoomSummaryProps) {
   return (
     <section className="room-summary">
       <div>
-        <span className="room-code-label">방 코드</span>
+        <span className="room-code-label">Room Code</span>
         <strong className="compact-code">{roomCode}</strong>
       </div>
       <div className="summary-stat">
-        <span>{playerCount(room)}명</span>
+        <span>{playerCount(room)} players</span>
         <span>{getRoomStepLabel(room.status)}</span>
       </div>
-      <button className="icon-button" type="button" title="초대 링크 복사" onClick={copyShareUrl}>
+      <button className="icon-button" type="button" title="Copy invite link" onClick={copyShareUrl}>
         {copied ? "OK" : "↗"}
       </button>
     </section>
@@ -774,10 +808,10 @@ function LoadingBotRunner() {
 
       const delta = Math.min(0.05, Math.max(0, (frameTime - previousFrameTime) / 1000));
       previousFrameTime = frameTime;
-      const progress = (frameTime % 1650) / 1650;
+      const progress = (frameTime % 1300) / 1300;
 
       if (runner) {
-        runner.position.set(-2.15 + progress * 4.3, -0.55 + Math.sin(frameTime / 92) * 0.018, 0);
+        runner.position.set(-0.42 + progress * 0.84, 0.08 + Math.sin(frameTime / 92) * 0.014, 0);
         runner.rotation.z = Math.sin(frameTime / 105) * 0.025;
       }
 
@@ -796,7 +830,7 @@ function LoadingBotRunner() {
         }
 
         runner = cloneSkeleton(loadedModel.model) as THREE.Group;
-        runner.scale.setScalar(0.36);
+        runner.scale.setScalar(0.28);
         runner.rotation.y = 0;
         scene.add(runner);
 
@@ -804,7 +838,7 @@ function LoadingBotRunner() {
           mixer = new THREE.AnimationMixer(runner);
           loadedModel.clips.forEach((clip) => {
             const action = mixer?.clipAction(clip);
-            action?.setEffectiveTimeScale(1.85);
+            action?.setEffectiveTimeScale(2.15);
             action?.play();
           });
         }
@@ -834,7 +868,7 @@ type PlayerListProps = {
 function PlayerList({ room }: PlayerListProps) {
   return (
     <section className="panel player-panel">
-      <h2>참가자</h2>
+      <h2>Players</h2>
       <ul className="player-list">
         {Object.entries(room.players).map(([uid, player]) => (
           <li key={uid}>
@@ -891,8 +925,8 @@ function VoteBoard({ currentUid, isHost, nickname, room, roomCode, store, onStar
     <section className="vote-layout">
       <div className="vote-head">
         <div>
-          <p className="status-label">최종 투표</p>
-          <h2>20개 메뉴 중 5개 출전</h2>
+          <p className="status-label">Final Vote</p>
+          <h2>Pick 5 of 20 menus to race</h2>
         </div>
         <strong>
           {draftVotes.length}/{VOTE_LIMIT}
@@ -940,10 +974,10 @@ function VoteBoard({ currentUid, isHost, nickname, room, roomCode, store, onStar
       <div className="start-row">
         {isHost ? (
           <button className="primary-button start-button" disabled={!hasAnyVote} type="button" onClick={onStart}>
-            상위 5개 레이스 시작
+            Start top 5 race
           </button>
         ) : (
-          <p className="waiting-text">방장이 시작하면 상위 5개 후보로 바로 출발합니다.</p>
+          <p className="waiting-text">The race starts when the host launches the top 5 finalists.</p>
         )}
       </div>
     </section>
@@ -1001,7 +1035,7 @@ function RaceScoreboard({ room, now }: RaceScoreboardProps) {
           </span>
         ))}
       </div>
-      <div className={`event-light${activeEvents.length ? " is-active" : ""}`} title={activeEventLabel || "이벤트 대기"}>
+      <div className={`event-light${activeEvents.length ? " is-active" : ""}`} title={activeEventLabel || "Waiting for event"}>
         {activeEventIcons || "GO"}
       </div>
     </section>
@@ -1286,7 +1320,7 @@ function SushiRaceTrack({ room, now }: SushiRaceTrackProps) {
         context.font = "950 12px Pretendard, Inter, sans-serif";
         context.textAlign = "center";
         context.textBaseline = "middle";
-        context.fillText("탈락", runnerX, laneY + 18);
+        context.fillText("OUT", runnerX, laneY + 18);
       }
 
       if (lane.isFinished) {
@@ -1301,7 +1335,7 @@ function SushiRaceTrack({ room, now }: SushiRaceTrackProps) {
     <section className="race-canvas-shell" aria-label="Sushi race track">
       <canvas className="race-canvas" ref={canvasRef} />
       <div className="sr-only">
-        {laneStates.map((lane) => `${lane.rank}위 ${lane.menuName} ${lane.isEliminated ? "탈락" : formatRaceTime(lane.finishMs)}`).join(", ")}
+        {laneStates.map((lane) => `${lane.rank}. ${lane.menuName} ${lane.isEliminated ? "Out" : formatRaceTime(lane.finishMs)}`).join(", ")}
       </div>
     </section>
   );
@@ -1314,6 +1348,8 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
   const cameraRef = useRef<THREE.OrthographicCamera | null>(null);
   const trackGroupRef = useRef<THREE.Group | null>(null);
   const racerGroupRef = useRef<THREE.Group | null>(null);
+  const roomRef = useRef(room);
+  const raceNowOffsetRef = useRef(now - Date.now());
   const modelCacheRef = useRef<Map<string, LoadedRaceModel>>(new Map());
   const animationMixersRef = useRef<THREE.AnimationMixer[]>([]);
   const racerObjectsRef = useRef<
@@ -1323,12 +1359,20 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
         laneIndex: number;
         runner: THREE.Group;
         shadow: THREE.Mesh;
+        runAction?: THREE.AnimationAction;
+        grabAction?: THREE.AnimationAction;
+        grabbed: boolean;
       }
     >
   >(new Map());
   const [modelReady, setModelReady] = useState(0);
   const laneStates = getRaceLaneStates(room, now);
   const menuIds = laneStates.map((lane) => lane.menuId).join("|");
+
+  useEffect(() => {
+    roomRef.current = room;
+    raceNowOffsetRef.current = now - Date.now();
+  }, [now, room]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -1378,6 +1422,64 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
       const delta = Math.min(0.05, Math.max(0, (frameTime - previousFrameTime) / 1000));
       previousFrameTime = frameTime;
       animationMixersRef.current.forEach((mixer) => mixer.update(delta));
+
+      if (racerObjectsRef.current.size) {
+        const frameNow = Date.now() + raceNowOffsetRef.current;
+        const frameLaneStates = getRaceLaneStates(roomRef.current, frameNow);
+        const startX = -3.55;
+        const endX = 3.55;
+        const railZs = [-1.72, 1.86];
+        const railYOffsets = [0.18, 0];
+        const railShadowYOffsets = [0.14, 0];
+        const elapsedMs = roomRef.current.raceStartedAt ? Math.max(0, frameNow - roomRef.current.raceStartedAt) : 0;
+
+        frameLaneStates.forEach((lane, laneIndex) => {
+          const racer = racerObjectsRef.current.get(lane.menuId);
+          if (!racer) {
+            return;
+          }
+
+          const railIndex = laneIndex % 2;
+          const laneSlot = Math.floor(laneIndex / 2);
+          const stackOffset = (laneSlot - 1) * 0.46;
+          const x = startX + lane.displayProgress * Math.max(1, endX - startX);
+          const z = railZs[railIndex] + stackOffset;
+          const grabEvent = (roomRef.current.raceEvents ?? []).find(
+            (event) => event.type === "chopsticks" && event.laneIndex === laneIndex && elapsedMs >= event.triggerAtMs,
+          );
+          const grabProgress = grabEvent
+            ? Math.min(1, Math.max(0, (elapsedMs - grabEvent.triggerAtMs) / Math.max(1, grabEvent.durationMs)))
+            : 0;
+          const isBeingGrabbed = Boolean(grabEvent && grabProgress < 1);
+          const liftProgress = isBeingGrabbed ? Math.min(1, Math.max(0, (grabProgress - 0.18) / 0.82)) : 0;
+          const bob = lane.isEliminated ? 0 : Math.sin(frameNow / 88 + laneIndex) * 0.052;
+          const weirdShake = isBeingGrabbed ? Math.sin(frameNow / 28 + laneIndex) * 0.12 : 0;
+          const visible = lane.isEliminated ? isBeingGrabbed && grabProgress < 0.96 : true;
+
+          if (isBeingGrabbed !== racer.grabbed) {
+            racer.grabbed = isBeingGrabbed;
+            if (isBeingGrabbed) {
+              racer.runAction?.fadeOut(0.12);
+              racer.grabAction?.reset().fadeIn(0.12).play();
+            } else {
+              racer.grabAction?.fadeOut(0.12);
+              racer.runAction?.reset().fadeIn(0.12).play();
+            }
+          }
+
+          racer.runner.position.set(x - liftProgress * 1.18, 0.16 + railYOffsets[railIndex] + bob + liftProgress * 1.86, z + liftProgress * 0.12);
+          racer.runner.rotation.x = isBeingGrabbed ? Math.sin(frameNow / 42) * 0.32 : 0;
+          racer.runner.rotation.y = isBeingGrabbed ? Math.sin(frameNow / 35) * 0.24 : 0;
+          racer.runner.rotation.z = isBeingGrabbed
+            ? -0.35 - liftProgress * 1.2 + weirdShake
+            : Math.sin(frameNow / 145 + laneIndex) * 0.05;
+          racer.runner.visible = visible;
+          racer.shadow.position.set(x, 0.02 + railShadowYOffsets[railIndex], z);
+          (racer.shadow.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.22 * (1 - liftProgress));
+          racer.shadow.visible = visible;
+        });
+      }
+
       renderer.render(scene, camera);
       frameId = window.requestAnimationFrame(renderFrame);
     };
@@ -1493,18 +1595,27 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
 
       const runner = cloneSkeleton(loadedModel.model) as THREE.Group;
       runner.renderOrder = 10 + railIndex * 10 + laneSlot;
-      runner.scale.multiplyScalar(width < 760 ? 0.736 : 0.896);
+      runner.scale.multiplyScalar(width < 760 ? 0.42 : 0.504);
       runner.position.set(x, 0.16 + railYOffsets[railIndex] + bob, z);
       runner.rotation.y = 0;
       runner.rotation.z = Math.sin(now / 180 + laneIndex) * 0.04;
-      loadedModel.clips.forEach((clip) => {
-        const mixer = new THREE.AnimationMixer(runner);
-        const action = mixer.clipAction(clip);
-        action.timeScale = 1.15;
-        action.play();
-        mixer.setTime(((now / 1000) + laneIndex * 0.18) % Math.max(0.1, clip.duration));
+      const mixer = new THREE.AnimationMixer(runner);
+      const runClip = loadedModel.clips[0];
+      const runAction = runClip ? mixer.clipAction(runClip) : undefined;
+      const grabAction = loadedModel.grabClip ? mixer.clipAction(loadedModel.grabClip) : undefined;
+
+      if (runAction) {
+        runAction.timeScale = 1.9;
+        runAction.play();
+        mixer.setTime(((now / 1000) + laneIndex * 0.18) % Math.max(0.1, runClip.duration));
         animationMixersRef.current.push(mixer);
-      });
+      }
+
+      if (grabAction) {
+        grabAction.timeScale = 1.25;
+        grabAction.enabled = false;
+      }
+
       runner.traverse((child) => {
         if (child instanceof THREE.Object3D) {
           child.visible = !lane.isEliminated || Math.sin(now / 120) > -0.2;
@@ -1517,7 +1628,7 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
       shadow.position.set(x, 0.02 + railShadowYOffsets[railIndex], z);
       shadow.scale.set(1.12, 0.42, 1);
       racerGroup.add(shadow, runner);
-      racerObjectsRef.current.set(lane.menuId, { laneIndex, runner, shadow });
+      racerObjectsRef.current.set(lane.menuId, { laneIndex, runner, shadow, runAction, grabAction, grabbed: false });
     });
 
     renderer.render(scene, camera);
@@ -1549,6 +1660,7 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
     const railZs = [-1.72, 1.86];
     const railYOffsets = [0.18, 0];
     const railShadowYOffsets = [0.14, 0];
+    const elapsedMs = room.raceStartedAt ? Math.max(0, now - room.raceStartedAt) : 0;
 
     laneStates.forEach((lane, laneIndex) => {
       const racer = racerObjectsRef.current.get(lane.menuId);
@@ -1561,16 +1673,62 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
       const stackOffset = (laneSlot - 1) * 0.46;
       const x = startX + lane.displayProgress * Math.max(1, endX - startX);
       const z = railZs[railIndex] + stackOffset;
+      const grabEvent = (room.raceEvents ?? []).find(
+        (event) => event.type === "chopsticks" && event.laneIndex === laneIndex && elapsedMs >= event.triggerAtMs,
+      );
+      const grabProgress = grabEvent ? Math.min(1, Math.max(0, (elapsedMs - grabEvent.triggerAtMs) / Math.max(1, grabEvent.durationMs))) : 0;
+      const liftProgress = grabEvent ? Math.min(1, Math.max(0, (grabProgress - 0.18) / 0.82)) : 0;
       const bob = lane.isEliminated ? 0 : Math.sin(now / 115 + laneIndex) * 0.055;
-      const visible = !lane.isEliminated || Math.sin(now / 120) > -0.2;
+      const visible = lane.isEliminated ? Boolean(grabEvent && grabProgress < 0.96) : true;
 
-      racer.runner.position.set(x, 0.16 + railYOffsets[railIndex] + bob, z);
-      racer.runner.rotation.z = Math.sin(now / 180 + laneIndex) * 0.04;
+      racer.runner.position.set(x - liftProgress * 1.18, 0.16 + railYOffsets[railIndex] + bob + liftProgress * 1.86, z + liftProgress * 0.12);
+      racer.runner.rotation.z = grabEvent ? -0.35 - liftProgress * 1.2 : Math.sin(now / 180 + laneIndex) * 0.04;
       racer.runner.visible = visible;
       racer.shadow.position.set(x, 0.02 + railShadowYOffsets[railIndex], z);
+      (racer.shadow.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.22 * (1 - liftProgress));
       racer.shadow.visible = visible;
     });
   }, [laneStates, modelReady, now]);
+
+  const raceElapsedMs = room.raceStartedAt ? Math.max(0, now - room.raceStartedAt) : 0;
+  const handEvents = (room.raceEvents ?? [])
+    .filter((event) => event.type === "chopsticks" && event.laneIndex !== null)
+    .map((event) => {
+      const progress = Math.min(1, Math.max(0, (raceElapsedMs - event.triggerAtMs) / Math.max(1, event.durationMs)));
+      const laneIndex = event.laneIndex ?? 0;
+      const lane = laneStates[laneIndex];
+
+      if (!lane || progress <= 0 || progress >= 1) {
+        return null;
+      }
+
+      const railIndex = laneIndex % 2;
+      const laneSlot = Math.floor(laneIndex / 2);
+      const approachProgress = Math.min(1, progress / 0.22);
+      const liftProgress = Math.min(1, Math.max(0, (progress - 0.18) / 0.82));
+      const xPercent = 7 + lane.displayProgress * 84 - liftProgress * 11.5;
+      const targetY = (railIndex === 0 ? 25 : 74) + (laneSlot - 1) * 4;
+      const yPercent = targetY - (1 - approachProgress) * 28 - liftProgress * 42;
+
+      return {
+        id: event.id,
+        progress,
+        xPercent,
+        yPercent,
+        opacity: Math.min(1, approachProgress * 1.4) * (1 - Math.max(0, progress - 0.86) / 0.14),
+        rotation: -18 + liftProgress * 11 + Math.sin(now / 45) * 2,
+        scale: 0.82 + approachProgress * 0.18,
+      };
+    })
+    .filter(Boolean) as Array<{
+    id: string;
+    progress: number;
+    xPercent: number;
+    yPercent: number;
+    opacity: number;
+    rotation: number;
+    scale: number;
+  }>;
 
   return (
     <section className="race-canvas-shell race-canvas-shell--3d" aria-label="3D sushi race track">
@@ -1578,10 +1736,25 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
         <div className="race-rail-object race-rail-object--top" />
         <div className="race-rail-object race-rail-object--bottom" />
         <div className="race-finish-mascot" />
+        {handEvents.map((event) => (
+          <div
+            className="race-hand-event"
+            key={event.id}
+            style={
+              {
+                "--hand-x": `${event.xPercent}%`,
+                "--hand-y": `${event.yPercent}%`,
+                "--hand-opacity": event.opacity,
+                "--hand-rotate": `${event.rotation}deg`,
+                "--hand-scale": event.scale,
+              } as CSSProperties
+            }
+          />
+        ))}
       </div>
       <div className="race-three-host" ref={hostRef} />
       <div className="sr-only">
-        {laneStates.map((lane) => `${lane.rank}위 ${lane.menuName} ${lane.isEliminated ? "탈락" : formatRaceTime(lane.finishMs)}`).join(", ")}
+        {laneStates.map((lane) => `${lane.rank}. ${lane.menuName} ${lane.isEliminated ? "Out" : formatRaceTime(lane.finishMs)}`).join(", ")}
       </div>
     </section>
   );
@@ -1701,7 +1874,7 @@ function PixiSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
       app.stage.addChild(rollers);
 
       const laneTag = new Text({
-        text: `${railIndex + 1} 레일`,
+        text: `Rail ${railIndex + 1}`,
         style: { fill: 0xffffff, fontFamily: "Pretendard, Inter, sans-serif", fontSize: 13, fontWeight: "900" },
       });
       laneTag.x = padding;
@@ -1785,7 +1958,7 @@ function PixiSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
 
       if (hasReverse) {
         const sweat = new Text({
-          text: "💦",
+          text: "↩",
           style: { fontFamily: "Apple Color Emoji, Segoe UI Emoji", fontSize: 22 },
         });
         sweat.x = runnerX + 30;
@@ -1804,7 +1977,7 @@ function PixiSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
         const badge = new Graphics();
         badge.roundRect(runnerX - 26, runnerY - 54, 52, 26, 13).fill({ color: 0x991b1b, alpha: 0.96 });
         const eliminated = new Text({
-          text: "탈락",
+          text: "OUT",
           style: { fill: 0xffffff, fontFamily: "Pretendard, Inter, sans-serif", fontSize: 13, fontWeight: "900" },
         });
         eliminated.anchor.set(0.5);
@@ -1832,7 +2005,7 @@ function PixiSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
     <section className="race-canvas-shell" aria-label="Sushi race track">
       <div className="race-pixi-host" ref={hostRef} />
       <div className="sr-only">
-        {laneStates.map((lane) => `${lane.rank}위 ${lane.menuName} ${lane.isEliminated ? "탈락" : formatRaceTime(lane.finishMs)}`).join(", ")}
+        {laneStates.map((lane) => `${lane.rank}. ${lane.menuName} ${lane.isEliminated ? "Out" : formatRaceTime(lane.finishMs)}`).join(", ")}
       </div>
     </section>
   );
@@ -1869,10 +2042,10 @@ function ResultView({ room }: ResultViewProps) {
       <section className="result-popup__rank-panel" aria-label="Race rankings">
         <div className="result-rankings">
           <article className="result-rank-row result-rank-row--head">
-            <strong>순위</strong>
-            <span>음식명</span>
-            <em>걸린시간</em>
-            <span>선택사용자이름</span>
+            <strong>Rank</strong>
+            <span>Menu</span>
+            <em>Time</em>
+            <span>Selected By</span>
           </article>
           {rankings.map((entry) => (
             <article className="result-rank-row" key={entry.menuId}>
@@ -1889,7 +2062,7 @@ function ResultView({ room }: ResultViewProps) {
 }
 
 function MenuImage({ menu, variant = "thumb" }: { menu: MenuCard; variant?: "preview" | "thumb" | "runner" | "winner" }) {
-  const primarySrc = variant === "preview" || variant === "thumb" ? getFoodImageUrl(menu) : menu.imageUrl;
+  const primarySrc = variant === "winner" ? getResultCardImageUrl(menu) : variant === "preview" || variant === "thumb" ? getFoodImageUrl(menu) : menu.imageUrl;
   const [src, setSrc] = useState(primarySrc);
 
   useEffect(() => {
