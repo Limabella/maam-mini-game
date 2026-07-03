@@ -1137,6 +1137,23 @@ input:focus {
   height: 100%;
 }
 
+.loading-bot-runner::after {
+  position: absolute;
+  left: calc(50% - 58px);
+  bottom: calc(20% + 15px);
+  width: 34px;
+  aspect-ratio: 1;
+  content: "";
+  background: url("/other/lunchfot-icon-cutout.png") center / contain no-repeat;
+  filter: drop-shadow(0 7px 10px rgba(0, 0, 0, 0.22));
+  transform-origin: 50% 100%;
+  animation: loading-bot-fallback-run 1.3s linear infinite;
+}
+
+.loading-bot-runner.has-3d-model::after {
+  display: none;
+}
+
 .race-loading-dots {
   position: absolute;
   left: 50%;
@@ -1339,6 +1356,29 @@ input:focus {
   filter:
     drop-shadow(0 18px 24px rgba(18, 10, 4, 0.46))
     drop-shadow(0 0 14px rgba(255, 197, 79, 0.22));
+  pointer-events: none;
+  will-change: left, top, transform, opacity;
+}
+
+.race-plate-event {
+  position: absolute;
+  left: var(--plate-x);
+  top: var(--plate-y);
+  z-index: 3;
+  width: clamp(50px, 4.6vw, 88px);
+  aspect-ratio: 2 / 3;
+  opacity: var(--plate-opacity);
+  transform:
+    translate(-50%, -72%)
+    rotate(var(--plate-rotate))
+    scale(var(--plate-scale));
+  transform-origin: 50% 82%;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+  filter:
+    drop-shadow(0 10px 15px rgba(18, 10, 4, 0.38))
+    drop-shadow(0 0 10px rgba(255, 187, 58, 0.22));
   pointer-events: none;
   will-change: left, top, transform, opacity;
 }
@@ -1881,6 +1921,20 @@ input:focus {
   50% {
     opacity: 1;
     transform: translateY(-5px) scale(1.08);
+  }
+}
+
+@keyframes loading-bot-fallback-run {
+  0% {
+    transform: translateX(0) translateY(-8px) rotate(-7deg) scale(0.58);
+  }
+
+  50% {
+    transform: translateX(58px) translateY(-14px) rotate(4deg) scale(0.58);
+  }
+
+  100% {
+    transform: translateX(116px) translateY(-8px) rotate(-7deg) scale(0.58);
   }
 }
 

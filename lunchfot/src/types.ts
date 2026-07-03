@@ -28,7 +28,7 @@ export type MenuVoteEntry = {
   updatedAt: number;
 };
 
-export type RaceEventType = "chopsticks" | "reverse-belt" | "green-tea";
+export type RaceEventType = "chopsticks" | "reverse-belt" | "green-tea" | "plate-stack";
 
 export type RaceEvent = {
   id: string;

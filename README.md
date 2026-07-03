@@ -1,19 +1,19 @@
 # MoaM Mini Game
 
-MoaM 프로젝트에서 실험 중인 미니게임 모음입니다. 현재는 `LunchFot`과 `Pedalrun` 두 게임이 같은 상위 폴더에 있습니다.
+MoaM Mini Game is a collection of small experimental games developed under the MoaM project. The repository currently contains browser-based and Unity-based prototypes.
 
 ## Games
 
 ### LunchFot
 
-점심 메뉴를 빠르게 고르는 웹 기반 멀티플레이 룰렛/다트 게임입니다.
+LunchFot is a real-time lunch menu race game. Players join a room, vote for lunch candidates, and watch the selected food characters race to decide the result.
 
-- 위치: `lunchfot`
-- 기술: React, Vite, TypeScript, Firebase Realtime Database 지원
-- 핵심 흐름: 방 생성, 코드 입장, 룰렛 회전, 다트 투척, 결과 공유
-- 현재 상태: 20개 점심 카드 적용, 20초 라운드, 5~18초 다트 투척 구간, 멀티플레이 조준/투척 표시
+- Location: `lunchfot`
+- Stack: React, Vite, TypeScript, Three.js, Firebase Realtime Database
+- Current focus: 3D character racing, rail effects, item events, result cards, and Firebase deployment
+- Status: Active prototype
 
-실행:
+Run locally:
 
 ```bash
 cd lunchfot
@@ -21,7 +21,7 @@ npm install
 npm run dev
 ```
 
-빌드:
+Build:
 
 ```bash
 cd lunchfot
@@ -30,32 +30,31 @@ npm run build
 
 ### Pedalrun
 
-자전거 페달링 입력을 중심으로 한 Unity 기반 러너/라이딩 게임입니다.
+Pedalrun is a Unity-based runner/racing prototype driven by bicycle pedal input.
 
-- 위치: `pedalrun`
-- 기술: Unity 6, URP
-- 핵심 흐름: 페달 입력, 조향, 속도감 기반 카메라 연출
-- 현재 상태: 기본 조작과 카메라 추적 실험 중
+- Location: `pedalrun`
+- Stack: Unity 6, URP
+- Current focus: basic movement, steering, speed-based camera direction, and runner gameplay tests
+- Status: Prototype
 
-실행:
+Run:
 
 ```text
-Unity Hub에서 pedalrun 폴더 열기
+Open the pedalrun folder in Unity Hub.
 ```
 
-## Folder Structure
+## Repository Layout
 
 ```text
 moam-mini-game/
-  Assets/
   lunchfot/
   pedalrun/
   README.md
+  README_KO.md
 ```
 
 ## Notes
 
-- `LunchFot`은 브라우저 기반 게임입니다.
-- `Pedalrun`은 Unity 프로젝트입니다.
-- 각 게임의 세부 실행 방법은 개별 폴더의 README 또는 프로젝트 설정을 확인합니다.
-# moam-mini-game
+- `lunchfot` is the main web game currently under active iteration.
+- `pedalrun` is a Unity prototype and may require a matching Unity editor version.
+- Each game may include its own setup notes in its project folder.

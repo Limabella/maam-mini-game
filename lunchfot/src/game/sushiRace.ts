@@ -7,6 +7,8 @@ export const VOTE_LIMIT = 5;
 export const RACE_MIN_DURATION_MS = 32_000;
 export const RACE_MAX_DURATION_MS = 41_000;
 
+const PLATE_STACK_HIT_PENALTY_MS = 4_200;
+
 export type VoteTally = {
   menuId: string;
   votes: number;
@@ -97,6 +99,7 @@ export const createRaceEvents = (finalists: string[], seed: number, durationMs: 
   const jitter = (amount = 0.05) => (random() - 0.5) * amount * durationMs;
   const clampTrigger = (value: number) => Math.round(Math.min(durationMs - 3800, Math.max(4200, value)));
   const greenTeaLane = pickLane();
+  const plateLane = pickLane();
   const events: RaceEvent[] = [
     {
       id: "reverse-belt-1",
@@ -115,6 +118,16 @@ export const createRaceEvents = (finalists: string[], seed: number, durationMs: 
       laneIndex: greenTeaLane,
       menuId: finalists[greenTeaLane] ?? finalists[0],
       penaltyMs: 2600 + Math.round(random() * 1800),
+    },
+    {
+      id: "plate-stack-1",
+      type: "plate-stack",
+      triggerAtMs: clampTrigger(durationMs * 0.38 + jitter()),
+      durationMs: 3400,
+      laneIndex: plateLane,
+      menuId: finalists[plateLane] ?? finalists[0],
+      penaltyMs: 3300 + Math.round(random() * 900),
+      affectsAll: true,
     },
   ];
 
@@ -155,7 +168,10 @@ const getLanePenaltyMs = (room: RoomState, laneIndex: number, elapsedMs = Number
         (event.affectsAll || event.laneIndex === laneIndex) &&
         elapsedMs >= event.triggerAtMs,
     )
-    .reduce((total, event) => total + event.penaltyMs, 0);
+    .reduce((total, event) => {
+      const hitPenalty = event.type === "plate-stack" && event.laneIndex === laneIndex ? PLATE_STACK_HIT_PENALTY_MS : 0;
+      return total + event.penaltyMs + hitPenalty;
+    }, 0);
 };
 
 const getEliminationEvent = (room: RoomState, laneIndex: number, elapsedMs = Number.POSITIVE_INFINITY) => {

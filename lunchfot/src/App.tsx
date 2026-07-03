@@ -138,11 +138,12 @@ const createLoadedRaceModel = (root: THREE.Object3D, clips: THREE.AnimationClip[
   normalized.scale.setScalar(1 / maxSize);
 
   const runningClips = selectRunningClips(clips);
+  const grabClip = selectGrabClip(clips, runningClips);
 
   return {
     model: normalized,
     clips: runningClips,
-    grabClip: selectGrabClip(clips, runningClips),
+    grabClip,
   };
 };
 
@@ -247,7 +248,11 @@ const RACE_EVENT_META: Record<RaceEventType, { icon: string; label: string }> = 
   chopsticks: { icon: "🥢", label: "Hand Grab" },
   "reverse-belt": { icon: "↩", label: "Reverse Rail" },
   "green-tea": { icon: "🍵", label: "Green Tea Slip" },
+  "plate-stack": { icon: "🍽", label: "Plate Rush" },
 };
+
+const PLATE_STACK_IMPACT_PROGRESS = 0.62;
+const PLATE_STACK_HIT_HOLD_MS = 1_150;
 
 function App() {
   const [store, setStore] = useState<RoomStore | null>(null);
@@ -569,6 +574,7 @@ function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRo
   const prevStatusRef = useRef(room.status);
   const prevRaceVisibleRef = useRef(false);
   const [raceModelsReady, setRaceModelsReady] = useState(false);
+  const [raceModelFallback, setRaceModelFallback] = useState(false);
   const [raceVisualKey, setRaceVisualKey] = useState("");
   const [raceVisualOffset, setRaceVisualOffset] = useState(0);
   const isHost = room.hostUid === currentUid;
@@ -614,26 +620,40 @@ function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRo
   useEffect(() => {
     if (room.status !== "countdown" && room.status !== "playing") {
       setRaceModelsReady(false);
+      setRaceModelFallback(false);
       return;
     }
 
     let cancelled = false;
     setRaceModelsReady(false);
+    setRaceModelFallback(false);
+    const fallbackTimer = window.setTimeout(() => {
+      if (!cancelled) {
+        setRaceModelFallback(true);
+        setRaceModelsReady(true);
+      }
+    }, 12_000);
+
     preloadRaceModels(finalistIds.slice(0, FINALIST_COUNT))
       .then(() => {
         if (!cancelled) {
+          window.clearTimeout(fallbackTimer);
+          setRaceModelFallback(false);
           setRaceModelsReady(true);
         }
       })
       .catch((error) => {
         console.error(error);
         if (!cancelled) {
+          window.clearTimeout(fallbackTimer);
+          setRaceModelFallback(true);
           setRaceModelsReady(true);
         }
       });
 
     return () => {
       cancelled = true;
+      window.clearTimeout(fallbackTimer);
     };
   }, [finalistKey, room.status]);
 
@@ -677,7 +697,7 @@ function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRo
   if (room.status === "playing" && raceModelsReady) {
     return (
       <section className="stage race-stage">
-        <ThreeSushiRaceTrack room={room} now={raceVisualNow} />
+        {raceModelFallback ? <PixiSushiRaceTrack room={room} now={raceVisualNow} /> : <ThreeSushiRaceTrack room={room} now={raceVisualNow} />}
       </section>
     );
   }
@@ -742,9 +762,18 @@ function RoomSummary({ room, roomCode }: RoomSummaryProps) {
 }
 
 function RaceLoadingStage() {
+  const [logoSrc, setLogoSrc] = useState("/other/maam-food-logo.png");
+
   return (
     <section className="countdown-stage race-loading-stage" aria-label="Loading race assets">
-      <img className="countdown-logo race-loading-logo" src="/other/maam-food-logo.png" alt="MaAM Food" />
+      <img
+        className="countdown-logo race-loading-logo"
+        src={logoSrc}
+        alt="MaAM Food"
+        onError={() => {
+          setLogoSrc((current) => (current === "/other/maam-food-logo.png" ? "/background/maam-food-logo.png" : "/other/lunchfot-icon-cutout.png"));
+        }}
+      />
       <div className="race-loading-runway">
         <LoadingBotRunner />
         <div className="race-loading-dots" aria-hidden="true">
@@ -759,6 +788,7 @@ function RaceLoadingStage() {
 
 function LoadingBotRunner() {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const [hasModel, setHasModel] = useState(false);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -833,6 +863,7 @@ function LoadingBotRunner() {
         runner.scale.setScalar(0.28);
         runner.rotation.y = 0;
         scene.add(runner);
+        setHasModel(true);
 
         if (loadedModel.clips.length) {
           mixer = new THREE.AnimationMixer(runner);
@@ -843,7 +874,10 @@ function LoadingBotRunner() {
           });
         }
       })
-      .catch(console.error);
+      .catch((error) => {
+        console.error(error);
+        setHasModel(false);
+      });
 
     frameId = window.requestAnimationFrame(renderFrame);
 
@@ -858,7 +892,7 @@ function LoadingBotRunner() {
     };
   }, []);
 
-  return <div className="loading-bot-runner" ref={hostRef} />;
+  return <div className={`loading-bot-runner${hasModel ? " has-3d-model" : ""}`} ref={hostRef} />;
 }
 
 type PlayerListProps = {
@@ -1426,7 +1460,7 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
       if (racerObjectsRef.current.size) {
         const frameNow = Date.now() + raceNowOffsetRef.current;
         const frameLaneStates = getRaceLaneStates(roomRef.current, frameNow);
-        const startX = -3.55;
+        const startX = -4.25;
         const endX = 3.55;
         const railZs = [-1.72, 1.86];
         const railYOffsets = [0.18, 0];
@@ -1450,9 +1484,18 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
           const grabProgress = grabEvent
             ? Math.min(1, Math.max(0, (elapsedMs - grabEvent.triggerAtMs) / Math.max(1, grabEvent.durationMs)))
             : 0;
+          const plateHitEvent = (roomRef.current.raceEvents ?? []).find((event) => {
+            if (event.type !== "plate-stack" || event.laneIndex !== laneIndex) {
+              return false;
+            }
+
+            const impactAt = event.triggerAtMs + event.durationMs * PLATE_STACK_IMPACT_PROGRESS;
+            return elapsedMs >= impactAt && elapsedMs <= impactAt + PLATE_STACK_HIT_HOLD_MS;
+          });
           const isBeingGrabbed = Boolean(grabEvent && grabProgress < 1);
+          const isPlateHit = Boolean(plateHitEvent);
           const liftProgress = isBeingGrabbed ? Math.min(1, Math.max(0, (grabProgress - 0.18) / 0.82)) : 0;
-          const bob = lane.isEliminated ? 0 : Math.sin(frameNow / 88 + laneIndex) * 0.052;
+          const bob = lane.isEliminated || isPlateHit ? 0 : Math.sin(frameNow / 88 + laneIndex) * 0.052;
           const weirdShake = isBeingGrabbed ? Math.sin(frameNow / 28 + laneIndex) * 0.12 : 0;
           const visible = lane.isEliminated ? isBeingGrabbed && grabProgress < 0.96 : true;
 
@@ -1467,15 +1510,17 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
             }
           }
 
-          racer.runner.position.set(x - liftProgress * 1.18, 0.16 + railYOffsets[railIndex] + bob + liftProgress * 1.86, z + liftProgress * 0.12);
-          racer.runner.rotation.x = isBeingGrabbed ? Math.sin(frameNow / 42) * 0.32 : 0;
+          racer.runner.position.set(x - liftProgress * 0.55 - (isPlateHit ? 0.1 : 0), 0.16 + railYOffsets[railIndex] + bob + liftProgress * 1.96, z + liftProgress * 0.12);
+          racer.runner.rotation.x = isBeingGrabbed ? Math.sin(frameNow / 42) * 0.32 : isPlateHit ? -0.46 : 0;
           racer.runner.rotation.y = isBeingGrabbed ? Math.sin(frameNow / 35) * 0.24 : 0;
           racer.runner.rotation.z = isBeingGrabbed
             ? -0.35 - liftProgress * 1.2 + weirdShake
-            : Math.sin(frameNow / 145 + laneIndex) * 0.05;
+            : isPlateHit
+              ? -0.55 + Math.sin(frameNow / 55) * 0.06
+              : Math.sin(frameNow / 145 + laneIndex) * 0.05;
           racer.runner.visible = visible;
           racer.shadow.position.set(x, 0.02 + railShadowYOffsets[railIndex], z);
-          (racer.shadow.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.22 * (1 - liftProgress));
+          (racer.shadow.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.14 * (1 - liftProgress));
           racer.shadow.visible = visible;
         });
       }
@@ -1572,9 +1617,9 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
     animationMixersRef.current = [];
     racerObjectsRef.current.clear();
 
-    const shadowMaterial = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.22 });
+    const shadowMaterial = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.14 });
 
-    const startX = -3.55;
+    const startX = -4.25;
     const endX = 3.55;
     const railZs = [-1.72, 1.86];
     const railYOffsets = [0.18, 0];
@@ -1622,11 +1667,11 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
         }
       });
 
-      const shadow = new THREE.Mesh(new THREE.CircleGeometry(0.42, 32), shadowMaterial);
+      const shadow = new THREE.Mesh(new THREE.CircleGeometry(0.3, 32), shadowMaterial);
       shadow.renderOrder = runner.renderOrder - 1;
       shadow.rotation.x = -Math.PI / 2;
       shadow.position.set(x, 0.02 + railShadowYOffsets[railIndex], z);
-      shadow.scale.set(1.12, 0.42, 1);
+      shadow.scale.set(0.82, 0.26, 1);
       racerGroup.add(shadow, runner);
       racerObjectsRef.current.set(lane.menuId, { laneIndex, runner, shadow, runAction, grabAction, grabbed: false });
     });
@@ -1655,7 +1700,7 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
     camera.bottom = -viewHeight / 2;
     camera.updateProjectionMatrix();
 
-    const startX = -3.55;
+    const startX = -4.25;
     const endX = 3.55;
     const railZs = [-1.72, 1.86];
     const railYOffsets = [0.18, 0];
@@ -1677,15 +1722,25 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
         (event) => event.type === "chopsticks" && event.laneIndex === laneIndex && elapsedMs >= event.triggerAtMs,
       );
       const grabProgress = grabEvent ? Math.min(1, Math.max(0, (elapsedMs - grabEvent.triggerAtMs) / Math.max(1, grabEvent.durationMs))) : 0;
+      const plateHitEvent = (room.raceEvents ?? []).find((event) => {
+        if (event.type !== "plate-stack" || event.laneIndex !== laneIndex) {
+          return false;
+        }
+
+        const impactAt = event.triggerAtMs + event.durationMs * PLATE_STACK_IMPACT_PROGRESS;
+        return elapsedMs >= impactAt && elapsedMs <= impactAt + PLATE_STACK_HIT_HOLD_MS;
+      });
       const liftProgress = grabEvent ? Math.min(1, Math.max(0, (grabProgress - 0.18) / 0.82)) : 0;
-      const bob = lane.isEliminated ? 0 : Math.sin(now / 115 + laneIndex) * 0.055;
+      const isPlateHit = Boolean(plateHitEvent);
+      const bob = lane.isEliminated || isPlateHit ? 0 : Math.sin(now / 115 + laneIndex) * 0.055;
       const visible = lane.isEliminated ? Boolean(grabEvent && grabProgress < 0.96) : true;
 
-      racer.runner.position.set(x - liftProgress * 1.18, 0.16 + railYOffsets[railIndex] + bob + liftProgress * 1.86, z + liftProgress * 0.12);
-      racer.runner.rotation.z = grabEvent ? -0.35 - liftProgress * 1.2 : Math.sin(now / 180 + laneIndex) * 0.04;
+      racer.runner.position.set(x - liftProgress * 0.55 - (isPlateHit ? 0.1 : 0), 0.16 + railYOffsets[railIndex] + bob + liftProgress * 1.96, z + liftProgress * 0.12);
+      racer.runner.rotation.x = isPlateHit ? -0.46 : 0;
+      racer.runner.rotation.z = grabEvent ? -0.35 - liftProgress * 1.2 : isPlateHit ? -0.55 : Math.sin(now / 180 + laneIndex) * 0.04;
       racer.runner.visible = visible;
       racer.shadow.position.set(x, 0.02 + railShadowYOffsets[railIndex], z);
-      (racer.shadow.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.22 * (1 - liftProgress));
+      (racer.shadow.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.14 * (1 - liftProgress));
       racer.shadow.visible = visible;
     });
   }, [laneStates, modelReady, now]);
@@ -1706,9 +1761,9 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
       const laneSlot = Math.floor(laneIndex / 2);
       const approachProgress = Math.min(1, progress / 0.22);
       const liftProgress = Math.min(1, Math.max(0, (progress - 0.18) / 0.82));
-      const xPercent = 7 + lane.displayProgress * 84 - liftProgress * 11.5;
-      const targetY = (railIndex === 0 ? 25 : 74) + (laneSlot - 1) * 4;
-      const yPercent = targetY - (1 - approachProgress) * 28 - liftProgress * 42;
+      const xPercent = 9 + lane.displayProgress * 84 - liftProgress * 10;
+      const targetY = (railIndex === 0 ? 28 : 77) + (laneSlot - 1) * 4;
+      const yPercent = targetY - (1 - approachProgress) * 27 - liftProgress * 40;
 
       return {
         id: event.id,
@@ -1729,13 +1784,77 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
     rotation: number;
     scale: number;
   }>;
+  const plateStackEvents = (room.raceEvents ?? [])
+    .filter((event) => event.type === "plate-stack" && event.laneIndex !== null)
+    .map((event) => {
+      const progress = Math.min(1, Math.max(0, (raceElapsedMs - event.triggerAtMs) / Math.max(1, event.durationMs)));
+      const laneIndex = event.laneIndex ?? 0;
+      const lane = laneStates[laneIndex];
+
+      if (!lane || progress <= 0 || progress >= 1) {
+        return null;
+      }
+
+      const railIndex = laneIndex % 2;
+      const laneSlot = Math.floor(laneIndex / 2);
+      const impactProgress = Math.min(1, progress / PLATE_STACK_IMPACT_PROGRESS);
+      const hitProgress = Math.max(0, (progress - PLATE_STACK_IMPACT_PROGRESS) / (1 - PLATE_STACK_IMPACT_PROGRESS));
+      const hitFrame = hitProgress <= 0 ? 0 : Math.min(3, Math.floor(hitProgress * 5) + 1);
+      const imageUrl =
+        hitFrame === 1
+          ? "/other/10dish_item_hit_01.png"
+          : hitFrame === 2
+            ? "/other/10dish_item_hit_02.png"
+            : hitFrame >= 3
+              ? "/other/10dish_item_hit_03.png"
+              : "/other/10dish_item.png";
+      const targetX = 9 + lane.displayProgress * 84;
+      const targetY = (railIndex === 0 ? 28 : 77) + (laneSlot - 1) * 4;
+      const xPercent = 103 - impactProgress * Math.max(1, 103 - targetX) + hitProgress * 1.2;
+
+      return {
+        id: event.id,
+        imageUrl,
+        xPercent,
+        yPercent: targetY + Math.sin(now / 50) * (hitFrame ? 0.4 : 1.1),
+        opacity: hitFrame ? Math.max(0, 1 - Math.max(0, hitProgress - 0.72) / 0.28) : Math.min(1, progress / 0.12),
+        rotation: hitFrame ? -8 + Math.sin(now / 38) * 8 : -4 + Math.sin(now / 72) * 3,
+        scale: hitFrame ? 0.62 + hitProgress * 0.18 : 0.5 + impactProgress * 0.1,
+      };
+    })
+    .filter(Boolean) as Array<{
+    id: string;
+    imageUrl: string;
+    xPercent: number;
+    yPercent: number;
+    opacity: number;
+    rotation: number;
+    scale: number;
+  }>;
+  const hasPlateStackEvent = plateStackEvents.length > 0;
 
   return (
     <section className="race-canvas-shell race-canvas-shell--3d" aria-label="3D sushi race track">
       <div className="race-rail-stage" aria-hidden="true">
-        <div className="race-rail-object race-rail-object--top" />
-        <div className="race-rail-object race-rail-object--bottom" />
+        <div className={`race-rail-object race-rail-object--top${hasPlateStackEvent ? " is-reversed" : ""}`} />
+        <div className={`race-rail-object race-rail-object--bottom${hasPlateStackEvent ? " is-reversed" : ""}`} />
         <div className="race-finish-mascot" />
+        {plateStackEvents.map((event) => (
+          <div
+            className="race-plate-event"
+            key={event.id}
+            style={
+              {
+                "--plate-x": `${event.xPercent}%`,
+                "--plate-y": `${event.yPercent}%`,
+                "--plate-opacity": event.opacity,
+                "--plate-rotate": `${event.rotation}deg`,
+                "--plate-scale": event.scale,
+                backgroundImage: `url("${event.imageUrl}")`,
+              } as CSSProperties
+            }
+          />
+        ))}
         {handEvents.map((event) => (
           <div
             className="race-hand-event"
@@ -2063,6 +2182,7 @@ function ResultView({ room }: ResultViewProps) {
 
 function MenuImage({ menu, variant = "thumb" }: { menu: MenuCard; variant?: "preview" | "thumb" | "runner" | "winner" }) {
   const primarySrc = variant === "winner" ? getResultCardImageUrl(menu) : variant === "preview" || variant === "thumb" ? getFoodImageUrl(menu) : menu.imageUrl;
+  const fallbackSrc = primarySrc === menu.imageUrl ? menu.fallbackImageUrl : menu.imageUrl;
   const [src, setSrc] = useState(primarySrc);
 
   useEffect(() => {
@@ -2075,7 +2195,9 @@ function MenuImage({ menu, variant = "thumb" }: { menu: MenuCard; variant?: "pre
         alt=""
         src={src}
         onError={() => {
-          if (src !== menu.fallbackImageUrl) {
+          if (src !== fallbackSrc) {
+            setSrc(fallbackSrc);
+          } else if (src !== menu.fallbackImageUrl) {
             setSrc(menu.fallbackImageUrl);
           }
         }}
