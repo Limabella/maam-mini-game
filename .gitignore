@@ -17,6 +17,10 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# Local browser/render scratch output
+lunchfot/tmp/
+lunchfot/public/3b_fbx/
+
 # Unity generated files
 Library/
 Temp/
