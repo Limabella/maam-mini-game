@@ -1290,7 +1290,7 @@ input:focus {
   position: absolute;
   left: 50%;
   top: 61%;
-  z-index: 1;
+  z-index: 3;
   width: min(86vw, 1460px);
   height: min(48vw, 48vh);
   min-height: 320px;
@@ -1327,18 +1327,6 @@ input:focus {
   animation-direction: reverse;
 }
 
-.race-finish-mascot {
-  position: absolute;
-  right: -4%;
-  top: 50%;
-  z-index: 3;
-  width: clamp(210px, 18vw, 340px);
-  aspect-ratio: 3 / 2;
-  transform: translateY(-52%);
-  background: url("/other/finish_ntr_flag.png") center / contain no-repeat;
-  filter: drop-shadow(0 16px 24px rgba(18, 10, 4, 0.5));
-}
-
 .race-hand-event {
   position: absolute;
   left: var(--hand-x);
@@ -1364,15 +1352,15 @@ input:focus {
   position: absolute;
   left: var(--plate-x);
   top: var(--plate-y);
-  z-index: 3;
-  width: clamp(50px, 4.6vw, 88px);
+  z-index: 5;
+  width: clamp(78px, 6.4vw, 132px);
   aspect-ratio: 2 / 3;
   opacity: var(--plate-opacity);
   transform:
-    translate(-50%, -72%)
+    translate(-50%, -100%)
     rotate(var(--plate-rotate))
     scale(var(--plate-scale));
-  transform-origin: 50% 82%;
+  transform-origin: 50% 100%;
   background-position: center;
   background-repeat: no-repeat;
   background-size: contain;

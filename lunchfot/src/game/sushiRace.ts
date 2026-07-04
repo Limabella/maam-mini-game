@@ -4,10 +4,13 @@ import type { RaceEvent, RaceEventType, RaceResultRankEntry, ResultEntry, RoomSt
 
 export const FINALIST_COUNT = 5;
 export const VOTE_LIMIT = 5;
-export const RACE_MIN_DURATION_MS = 32_000;
-export const RACE_MAX_DURATION_MS = 41_000;
+export const RACE_MIN_DURATION_MS = 45_000;
+export const RACE_MAX_DURATION_MS = 62_000;
 
-const PLATE_STACK_HIT_PENALTY_MS = 4_200;
+export const PLATE_STACK_EVENT_COUNT = 4;
+export const PLATE_STACK_IMPACT_PROGRESS = 0.62;
+export const PLATE_STACK_HIT_HOLD_MS = 3_000;
+const PLATE_STACK_SLOW_PENALTY_MS = 1_800;
 
 export type VoteTally = {
   menuId: string;
@@ -99,7 +102,6 @@ export const createRaceEvents = (finalists: string[], seed: number, durationMs: 
   const jitter = (amount = 0.05) => (random() - 0.5) * amount * durationMs;
   const clampTrigger = (value: number) => Math.round(Math.min(durationMs - 3800, Math.max(4200, value)));
   const greenTeaLane = pickLane();
-  const plateLane = pickLane();
   const events: RaceEvent[] = [
     {
       id: "reverse-belt-1",
@@ -119,17 +121,27 @@ export const createRaceEvents = (finalists: string[], seed: number, durationMs: 
       menuId: finalists[greenTeaLane] ?? finalists[0],
       penaltyMs: 2600 + Math.round(random() * 1800),
     },
-    {
-      id: "plate-stack-1",
-      type: "plate-stack",
-      triggerAtMs: clampTrigger(durationMs * 0.38 + jitter()),
-      durationMs: 3400,
-      laneIndex: plateLane,
-      menuId: finalists[plateLane] ?? finalists[0],
-      penaltyMs: 3300 + Math.round(random() * 900),
-      affectsAll: true,
-    },
   ];
+
+  const plateSlots = [0.28, 0.44, 0.6, 0.76]
+    .map((slot) => clampTrigger(durationMs * slot + jitter(0.035)))
+    .sort((a, b) => a - b);
+
+  const plateStackEventCount = 3 + Math.floor(random() * 2);
+
+  plateSlots.slice(0, Math.min(PLATE_STACK_EVENT_COUNT, plateStackEventCount)).forEach((triggerAtMs, index) => {
+    const railIndex = Math.floor(random() * 2);
+    events.push({
+      id: `plate-stack-${index + 1}`,
+      type: "plate-stack",
+      triggerAtMs,
+      durationMs: 3400,
+      railIndex,
+      laneIndex: null,
+      penaltyMs: PLATE_STACK_SLOW_PENALTY_MS,
+      affectsAll: true,
+    });
+  });
 
   const chopstickLane = pickLane();
   events.push({
@@ -168,9 +180,72 @@ const getLanePenaltyMs = (room: RoomState, laneIndex: number, elapsedMs = Number
         (event.affectsAll || event.laneIndex === laneIndex) &&
         elapsedMs >= event.triggerAtMs,
     )
+    .reduce((total, event) => total + event.penaltyMs, 0);
+};
+
+export const getPlateStackImpactElapsedMs = (event: RaceEvent) => Math.round(event.triggerAtMs + event.durationMs * PLATE_STACK_IMPACT_PROGRESS);
+
+const getLanePenaltyMsBeforePlateHit = (room: RoomState, laneIndex: number, elapsedMs: number, currentPlateEvent: RaceEvent) => {
+  return (room.raceEvents ?? [])
+    .filter(
+      (event) =>
+        event.type !== "chopsticks" &&
+        event.id !== currentPlateEvent.id &&
+        (event.type !== "plate-stack" || event.triggerAtMs < currentPlateEvent.triggerAtMs) &&
+        (event.affectsAll || event.laneIndex === laneIndex) &&
+        elapsedMs >= event.triggerAtMs,
+    )
     .reduce((total, event) => {
-      const hitPenalty = event.type === "plate-stack" && event.laneIndex === laneIndex ? PLATE_STACK_HIT_PENALTY_MS : 0;
-      return total + event.penaltyMs + hitPenalty;
+      const hitHoldMs = event.type === "plate-stack" && getPlateStackTargetLaneIndex(room, event) === laneIndex ? PLATE_STACK_HIT_HOLD_MS : 0;
+      return total + event.penaltyMs + hitHoldMs;
+    }, 0);
+};
+
+export const getPlateStackTargetLaneIndex = (room: RoomState, event: RaceEvent) => {
+  const finalists = room.finalists?.length ? room.finalists.slice(0, FINALIST_COUNT) : selectFinalists(room);
+  const impactElapsedMs = getPlateStackImpactElapsedMs(event);
+  const targetRailIndex = event.railIndex ?? event.laneIndex ?? 0;
+  let bestLaneIndex = 0;
+  let bestProgress = -1;
+
+  finalists.forEach((menuId, laneIndex) => {
+    if (laneIndex % 2 !== targetRailIndex) {
+      return;
+    }
+
+    if (getEliminationEvent(room, laneIndex, impactElapsedMs)) {
+      return;
+    }
+
+    const baseFinishMs = getRaceBaseFinishMs(room, menuId, laneIndex);
+    const penaltyMs = getLanePenaltyMsBeforePlateHit(room, laneIndex, impactElapsedMs, event);
+    const progress = Math.min(1, impactElapsedMs / Math.max(1, baseFinishMs + penaltyMs));
+
+    if (progress > bestProgress) {
+      bestProgress = progress;
+      bestLaneIndex = laneIndex;
+    }
+  });
+
+  if (bestProgress < 0) {
+    const fallbackLaneIndex = finalists.findIndex((_, laneIndex) => laneIndex % 2 === targetRailIndex);
+    return fallbackLaneIndex >= 0 ? fallbackLaneIndex : 0;
+  }
+
+  return bestLaneIndex;
+};
+
+const getPlateStackHitHoldMs = (room: RoomState, laneIndex: number, elapsedMs = Number.POSITIVE_INFINITY) => {
+  return (room.raceEvents ?? [])
+    .filter((event) => event.type === "plate-stack" && getPlateStackTargetLaneIndex(room, event) === laneIndex)
+    .reduce((total, event) => {
+      const impactElapsedMs = getPlateStackImpactElapsedMs(event);
+
+      if (elapsedMs < impactElapsedMs) {
+        return total;
+      }
+
+      return total + Math.min(PLATE_STACK_HIT_HOLD_MS, elapsedMs - impactElapsedMs);
     }, 0);
 };
 
@@ -185,7 +260,7 @@ export const getLaneFinishMs = (room: RoomState, menuId: string, laneIndex: numb
     return Number.POSITIVE_INFINITY;
   }
 
-  return getRaceBaseFinishMs(room, menuId, laneIndex) + getLanePenaltyMs(room, laneIndex);
+  return getRaceBaseFinishMs(room, menuId, laneIndex) + getLanePenaltyMs(room, laneIndex) + getPlateStackHitHoldMs(room, laneIndex);
 };
 
 export const getActiveRaceEvents = (room: RoomState, now: number) => {
@@ -211,10 +286,11 @@ export const getRaceLaneStates = (room: RoomState, now: number): RaceLaneState[]
     const menu = menuById.get(menuId);
     const racer = getRacerForMenu(menuId);
     const eliminationEvent = getEliminationEvent(room, laneIndex, elapsedMs);
-    const visibleElapsed = eliminationEvent ? eliminationEvent.triggerAtMs : elapsedMs;
+    const hitHoldMs = getPlateStackHitHoldMs(room, laneIndex, elapsedMs);
+    const visibleElapsed = Math.max(0, (eliminationEvent ? eliminationEvent.triggerAtMs : elapsedMs) - hitHoldMs);
     const baseFinishMs = getRaceBaseFinishMs(room, menuId, laneIndex);
-    const finishMs = eliminationEvent ? Number.POSITIVE_INFINITY : baseFinishMs + getLanePenaltyMs(room, laneIndex);
-    const penaltyMs = getLanePenaltyMs(room, laneIndex, visibleElapsed);
+    const finishMs = eliminationEvent ? Number.POSITIVE_INFINITY : baseFinishMs + getLanePenaltyMs(room, laneIndex) + getPlateStackHitHoldMs(room, laneIndex);
+    const penaltyMs = getLanePenaltyMs(room, laneIndex, visibleElapsed) + getPlateStackHitHoldMs(room, laneIndex, elapsedMs);
     const progressFinishMs = eliminationEvent ? baseFinishMs + penaltyMs : finishMs;
     const rawProgress = eliminationEvent
       ? Math.min(0.985, visibleElapsed / Math.max(1, progressFinishMs))

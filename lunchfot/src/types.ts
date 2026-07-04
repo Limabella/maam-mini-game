@@ -35,6 +35,7 @@ export type RaceEvent = {
   type: RaceEventType;
   triggerAtMs: number;
   durationMs: number;
+  railIndex?: number;
   laneIndex: number | null;
   menuId?: string;
   penaltyMs: number;
