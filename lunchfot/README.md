@@ -1,6 +1,11 @@
 # LunchFot
 
+> Live on Firebase Hosting: https://lunchfot.web.app  
+> Last deployed: 2026-07-04, project `burger-910f0`, hosting site `lunchfot`
+
 LunchFot is a real-time lunch selection mini game. Players create or join a room, vote for menu cards, watch the finalists race on animated conveyor rails, and receive a compact ranked result.
+
+This build is a demo version. Core room creation, voting, racing, and result display flows are available, while game balance and event variety are still being refined.
 
 ![LunchFot main screen](docs/main-screen.png)
 
@@ -16,7 +21,7 @@ LunchFot is a real-time lunch selection mini game. Players create or join a room
 - Loading transition with a running GLB bot
 - 3D GLB character race powered by Three.js
 - Animated conveyor rail objects with independent lane flow
-- NTR-N finish mascot at the finish zone
+- Three.js finish line aligned to the rail end
 - Result screen with a winning card and compact ranking table
 - Asset Lab modal for character motion and sprite testing
 
@@ -61,11 +66,11 @@ npx firebase-tools deploy --only hosting --project burger-910f0
 - Menu racer GLBs: `public/3d_glb/3m_001.glb` through `public/3d_glb/3m_020.glb`
 - Loading runner GLB: `public/3d_glb/winlose_bgj.glb`
 - Race rail texture: `public/other/rail_lane_tile.png`
-- Finish mascot: `public/other/finish_ntr_flag.png`
+- Plate event sprites: `public/other/10dish_item*.png`
 - Work-in-progress authoring assets under `public/character_assets/` are ignored by Git.
 
 ## Planned Work
 
-- Remove result-screen character and add food information
-- Event motion effects
-- Running 3D model refinements, motion variants, and effects
+- Improve the multi-vote system
+- Add character-specific special skill events
+- Refine game balance, motion variants, and race effects
