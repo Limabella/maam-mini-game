@@ -1,5 +1,7 @@
 ﻿# MaAM Mini Game
 
+> LunchFot demo: https://lunchfot.web.app
+
 MoaM Mini Game은 MoaM 프로젝트에서 실험 중인 미니게임 프로토타입 모음입니다. 현재는 브라우저 기반 점심 메뉴 선택 게임과 Unity 기반 라이딩 프로토타입을 포함합니다.
 
 ## 프로젝트
