@@ -1100,6 +1100,89 @@ input:focus {
     0 28px 86px rgba(0, 0, 0, 0.34);
 }
 
+.countdown-number--word {
+  font-size: clamp(48px, 13vw, 86px);
+}
+
+.race-loading-stage {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(255, 246, 220, 0.22), transparent 42%),
+    rgba(6, 12, 24, 0.26);
+}
+
+.race-loading-logo {
+  width: min(34vw, 190px);
+  padding: 8px 12px;
+}
+
+.race-loading-runway {
+  position: relative;
+  width: min(76vw, 640px);
+  height: min(25vw, 170px);
+  min-height: 128px;
+}
+
+.loading-bot-runner {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.loading-bot-runner canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.loading-bot-runner::after {
+  position: absolute;
+  left: calc(50% - 58px);
+  bottom: calc(20% + 15px);
+  width: 34px;
+  aspect-ratio: 1;
+  content: "";
+  background: url("/other/lunchfot-icon-cutout.png") center / contain no-repeat;
+  filter: drop-shadow(0 7px 10px rgba(0, 0, 0, 0.22));
+  transform-origin: 50% 100%;
+  animation: loading-bot-fallback-run 1.3s linear infinite;
+}
+
+.loading-bot-runner.has-3d-model::after {
+  display: none;
+}
+
+.race-loading-dots {
+  position: absolute;
+  left: 50%;
+  bottom: 20%;
+  z-index: 1;
+  display: flex;
+  gap: 20px;
+  transform: translateX(-50%);
+}
+
+.race-loading-dots span {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #fff8dc;
+  box-shadow:
+    0 0 0 5px rgba(15, 23, 42, 0.18),
+    0 10px 24px rgba(0, 0, 0, 0.22);
+  animation: loading-dot-pulse 1.2s ease-in-out infinite;
+}
+
+.race-loading-dots span:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.race-loading-dots span:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
 .race-stage {
   width: 100%;
   min-height: 100vh;
@@ -1168,6 +1251,10 @@ input:focus {
   box-shadow: none;
 }
 
+.race-canvas-shell--3d {
+  min-height: 100vh;
+}
+
 .race-canvas {
   display: block;
   width: 100%;
@@ -1183,6 +1270,115 @@ input:focus {
   display: block;
   width: 100%;
   height: 100%;
+}
+
+.race-three-host {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100vh;
+}
+
+.race-three-host canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.race-rail-stage {
+  position: absolute;
+  left: 50%;
+  top: 61%;
+  z-index: 3;
+  width: min(86vw, 1460px);
+  height: min(48vw, 48vh);
+  min-height: 320px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.race-rail-object {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: clamp(70px, 7vw, 116px);
+  overflow: hidden;
+  border-radius: 999px;
+  background-image: url("/other/rail_lane_tile.png");
+  background-repeat: repeat-x;
+  background-size: auto 100%;
+  box-shadow:
+    0 16px 30px rgba(23, 13, 5, 0.42),
+    inset 0 2px 0 rgba(255, 244, 214, 0.65),
+    inset 0 -7px 10px rgba(66, 36, 8, 0.42);
+  animation: race-rail-flow 12.1s linear infinite;
+}
+
+.race-rail-object--top {
+  top: 10%;
+}
+
+.race-rail-object--bottom {
+  bottom: 10%;
+}
+
+.race-rail-object.is-reversed {
+  animation-direction: reverse;
+}
+
+.race-hand-event {
+  position: absolute;
+  left: var(--hand-x);
+  top: var(--hand-y);
+  z-index: 4;
+  width: clamp(128px, 12vw, 230px);
+  aspect-ratio: 2 / 3;
+  opacity: var(--hand-opacity);
+  transform:
+    translate(-8%, -92%)
+    rotate(var(--hand-rotate))
+    scale(var(--hand-scale));
+  transform-origin: 8% 92%;
+  background: url("/other/hand.png") center / contain no-repeat;
+  filter:
+    drop-shadow(0 18px 24px rgba(18, 10, 4, 0.46))
+    drop-shadow(0 0 14px rgba(255, 197, 79, 0.22));
+  pointer-events: none;
+  will-change: left, top, transform, opacity;
+}
+
+.race-plate-event {
+  position: absolute;
+  left: var(--plate-x);
+  top: var(--plate-y);
+  z-index: 5;
+  width: clamp(78px, 6.4vw, 132px);
+  aspect-ratio: 2 / 3;
+  opacity: var(--plate-opacity);
+  transform:
+    translate(-50%, -100%)
+    rotate(var(--plate-rotate))
+    scale(var(--plate-scale));
+  transform-origin: 50% 100%;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+  filter:
+    drop-shadow(0 10px 15px rgba(18, 10, 4, 0.38))
+    drop-shadow(0 0 10px rgba(255, 187, 58, 0.22));
+  pointer-events: none;
+  will-change: left, top, transform, opacity;
+}
+
+@keyframes race-rail-flow {
+  from {
+    background-position-x: 0;
+  }
+
+  to {
+    background-position-x: 1230px;
+  }
 }
 
 .sr-only {
@@ -1700,6 +1896,33 @@ input:focus {
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes loading-dot-pulse {
+  0%,
+  100% {
+    opacity: 0.58;
+    transform: translateY(0) scale(0.92);
+  }
+
+  50% {
+    opacity: 1;
+    transform: translateY(-5px) scale(1.08);
+  }
+}
+
+@keyframes loading-bot-fallback-run {
+  0% {
+    transform: translateX(0) translateY(-8px) rotate(-7deg) scale(0.58);
+  }
+
+  50% {
+    transform: translateX(58px) translateY(-14px) rotate(4deg) scale(0.58);
+  }
+
+  100% {
+    transform: translateX(116px) translateY(-8px) rotate(-7deg) scale(0.58);
   }
 }
 

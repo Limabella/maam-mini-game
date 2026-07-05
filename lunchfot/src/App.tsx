@@ -1,11 +1,14 @@
-import {
+﻿import {
   useEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
 } from "react";
+import * as THREE from "three";
 import { Application, Assets, Container, Graphics, Sprite, Text, Texture } from "pixi.js";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 import AssetLab from "./AssetLab";
 import { menuById, menuCards } from "./data/menuCards";
 import { getMenuDisplayName, getRacerForMenu } from "./data/sushiRacers";
@@ -16,9 +19,13 @@ import {
   calculateRaceResult,
   formatRaceTime,
   getActiveRaceEvents,
+  getPlateStackImpactElapsedMs,
+  getPlateStackTargetLaneIndex,
   getRaceLaneStates,
   getVoteTallies,
   hasRaceWinner,
+  PLATE_STACK_HIT_HOLD_MS,
+  PLATE_STACK_IMPACT_PROGRESS,
   selectFinalists,
 } from "./game/sushiRace";
 import {
@@ -48,18 +55,11 @@ const useNow = (active = true) => {
       return;
     }
 
-    let frame = 0;
-    const tick = () => {
-      setNow(Date.now());
-      frame = window.requestAnimationFrame(tick);
-    };
-
-    frame = window.requestAnimationFrame(tick);
-    const fallback = window.setInterval(() => setNow(Date.now()), 160);
+    setNow(Date.now());
+    const interval = window.setInterval(() => setNow(Date.now()), 80);
 
     return () => {
-      window.cancelAnimationFrame(frame);
-      window.clearInterval(fallback);
+      window.clearInterval(interval);
     };
   }, [active]);
 
@@ -84,6 +84,187 @@ const getFoodImageUrl = (menu: MenuCard) => `/food/food_${getAssetStem(menu)}.pn
 
 const getRunnerImageUrl = (menu: MenuCard) => `/hero/runner_${getAssetStem(menu)}.png`;
 
+const getResultCardImageUrl = (menu: MenuCard) => `/card/lf-card/${getAssetStem(menu)}_lf.png`;
+
+const RACE_TRACK_STACK_Z_OFFSET = 0.012;
+const RACE_EVENT_STACK_Y_OFFSET = 0.7;
+const RACE_TRACK_START_X = -4.25;
+const RACE_TRACK_END_X = 3.55;
+const RACE_TRACK_RAIL_ZS = [-1.62, 1.72] as const;
+const RACE_TRACK_RAIL_Y_OFFSETS = [-0.02, 0] as const;
+const RACE_TRACK_SHADOW_Y_OFFSETS = [-0.02, 0] as const;
+const RACE_TRACK_RAIL_WIDTH = RACE_TRACK_END_X - RACE_TRACK_START_X + 0.9;
+const RACE_TRACK_RAIL_DEPTH = 0.82;
+const RACE_TRACK_FINISH_WIDTH = 0.18;
+
+const getRaceModelUrl = (menuId: string) => {
+  const menuIndex = Math.max(0, menuCards.findIndex((menu) => menu.id === menuId));
+  return `/3d_glb/3m_${String(menuIndex + 1).padStart(3, "0")}.glb`;
+};
+
+const applyRaceRenderPriority = (root: THREE.Object3D, renderOrder: number) => {
+  root.renderOrder = renderOrder;
+  root.traverse((child) => {
+    child.renderOrder = renderOrder;
+
+    if (!(child instanceof THREE.Mesh)) {
+      return;
+    }
+
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    materials.forEach((material) => {
+      if (!material) {
+        return;
+      }
+
+      const clonedMaterial = material.clone();
+      const usesAlpha = clonedMaterial.transparent || clonedMaterial.opacity < 1 || clonedMaterial.alphaTest > 0;
+      clonedMaterial.depthTest = true;
+      clonedMaterial.depthWrite = !usesAlpha;
+      child.material = Array.isArray(child.material)
+        ? (child.material as THREE.Material[]).map((entry) => (entry === material ? clonedMaterial : entry))
+        : clonedMaterial;
+    });
+  });
+};
+
+type LoadedRaceModel = {
+  model: THREE.Group;
+  clips: THREE.AnimationClip[];
+  grabClip?: THREE.AnimationClip;
+  fallClip?: THREE.AnimationClip;
+};
+
+const selectRunningClips = (clips: THREE.AnimationClip[]) => {
+  if (!clips.length) {
+    return [];
+  }
+
+  const runningClip = clips.reduce((best, clip) =>
+    Math.abs(clip.duration - 1.25) < Math.abs(best.duration - 1.25) ? clip : best,
+  );
+  return [runningClip];
+};
+
+const selectGrabClip = (clips: THREE.AnimationClip[], runningClips: THREE.AnimationClip[]) => {
+  const runningClip = runningClips[0];
+  return clips
+    .filter((clip) => clip !== runningClip)
+    .sort((a, b) => Math.abs(a.duration - 0.79) - Math.abs(b.duration - 0.79))[0];
+};
+
+const selectFallClip = (clips: THREE.AnimationClip[], runningClips: THREE.AnimationClip[], grabClip?: THREE.AnimationClip) => {
+  const runningClip = runningClips[0];
+  const remainingClips = clips.filter((clip) => clip !== runningClip && clip !== grabClip);
+  const namedFallClip = remainingClips.find((clip) => /fall|down|knock|hit|lose/i.test(clip.name));
+
+  return namedFallClip ?? remainingClips.sort((a, b) => b.duration - a.duration)[0];
+};
+
+const raceModelCache = new Map<string, LoadedRaceModel>();
+const raceModelPromises = new Map<string, Promise<LoadedRaceModel>>();
+const LOADING_BOT_MODEL_URL = "/3d_glb/winlose_bgj.glb";
+let loadingBotModel: LoadedRaceModel | null = null;
+let loadingBotPromise: Promise<LoadedRaceModel> | null = null;
+
+const createLoadedRaceModel = (root: THREE.Object3D, clips: THREE.AnimationClip[]): LoadedRaceModel => {
+  root.traverse((child) => {
+    if (child instanceof THREE.Mesh) {
+      child.castShadow = true;
+      child.receiveShadow = true;
+    }
+  });
+
+  const box = new THREE.Box3().setFromObject(root);
+  const size = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  box.getSize(size);
+  box.getCenter(center);
+  const maxSize = Math.max(size.x, size.y, size.z) || 1;
+
+  const normalized = new THREE.Group();
+  root.position.set(-center.x, -box.min.y, -center.z);
+  normalized.add(root);
+  normalized.scale.setScalar(1 / maxSize);
+
+  const runningClips = selectRunningClips(clips);
+  const grabClip = selectGrabClip(clips, runningClips);
+  const fallClip = selectFallClip(clips, runningClips, grabClip);
+
+  return {
+    model: normalized,
+    clips: runningClips,
+    grabClip,
+    fallClip,
+  };
+};
+
+const loadRaceModel = (menuId: string) => {
+  const cachedModel = raceModelCache.get(menuId);
+
+  if (cachedModel) {
+    return Promise.resolve(cachedModel);
+  }
+
+  const loadingModel = raceModelPromises.get(menuId);
+
+  if (loadingModel) {
+    return loadingModel;
+  }
+
+  const promise = new Promise<LoadedRaceModel>((resolve, reject) => {
+    new GLTFLoader().load(
+      getRaceModelUrl(menuId),
+      (gltf) => {
+        const loadedModel = createLoadedRaceModel(gltf.scene, gltf.animations);
+        raceModelCache.set(menuId, loadedModel);
+        raceModelPromises.delete(menuId);
+        resolve(loadedModel);
+      },
+      undefined,
+      (error) => {
+        raceModelPromises.delete(menuId);
+        reject(error);
+      },
+    );
+  });
+
+  raceModelPromises.set(menuId, promise);
+  return promise;
+};
+
+const loadLoadingBotModel = () => {
+  if (loadingBotModel) {
+    return Promise.resolve(loadingBotModel);
+  }
+
+  if (loadingBotPromise) {
+    return loadingBotPromise;
+  }
+
+  loadingBotPromise = new Promise<LoadedRaceModel>((resolve, reject) => {
+    new GLTFLoader().load(
+      LOADING_BOT_MODEL_URL,
+      (gltf) => {
+        loadingBotModel = createLoadedRaceModel(gltf.scene, gltf.animations);
+        loadingBotPromise = null;
+        resolve(loadingBotModel);
+      },
+      undefined,
+      (error) => {
+        loadingBotPromise = null;
+        reject(error);
+      },
+    );
+  });
+
+  return loadingBotPromise;
+};
+
+const preloadRaceModels = (menuIds: string[]) => {
+  return Promise.all(menuIds.map((menuId) => loadRaceModel(menuId)));
+};
+
 type GamePhaseId = "sushi" | "pending" | "dart";
 
 type FlowStepId = "main" | "game-select" | "vote-select" | "playing" | "result";
@@ -93,17 +274,17 @@ const GAME_PHASES: Array<{
   label: string;
   enabled: boolean;
 }> = [
-  { id: "sushi", label: "\ud68c\uc804 \ucd08\ubc25 \uac8c\uc784", enabled: true },
-  { id: "pending", label: "\uc900\ube44\uc911", enabled: false },
-  { id: "dart", label: "\ub2e4\ud2b8 \uac8c\uc784", enabled: false },
+  { id: "sushi", label: "Conveyor Sushi Race", enabled: true },
+  { id: "pending", label: "Coming Soon", enabled: false },
+  { id: "dart", label: "Dart Game", enabled: false },
 ];
 
 const FLOW_STEPS: Record<FlowStepId, string> = {
   main: "main",
-  "game-select": "\uac8c\uc784\uc120\ud0dd",
-  "vote-select": "\ud22c\ud45c\uc120\ud0dd",
-  playing: "\uac8c\uc784\uc9c4\ud589",
-  result: "\uacb0\uacfc\ud654\uba74",
+  "game-select": "Game Select",
+  "vote-select": "Vote Select",
+  playing: "Race",
+  result: "Results",
 };
 
 const ROOM_STATUS_TO_STEP: Record<RoomStatus, FlowStepId> = {
@@ -116,10 +297,12 @@ const ROOM_STATUS_TO_STEP: Record<RoomStatus, FlowStepId> = {
 const getRoomStepLabel = (status: RoomStatus) => FLOW_STEPS[ROOM_STATUS_TO_STEP[status]];
 
 const RACE_EVENT_META: Record<RaceEventType, { icon: string; label: string }> = {
-  chopsticks: { icon: "🥢", label: "젓가락 탈락" },
-  "reverse-belt": { icon: "↩", label: "역주행 레일" },
-  "green-tea": { icon: "🍵", label: "녹차 미끄러짐" },
+  chopsticks: { icon: "🥢", label: "Hand Grab" },
+  "reverse-belt": { icon: "↩", label: "Reverse Rail" },
+  "green-tea": { icon: "🍵", label: "Green Tea Slip" },
+  "plate-stack": { icon: "🍽", label: "Plate Rush" },
 };
+
 
 function App() {
   const [store, setStore] = useState<RoomStore | null>(null);
@@ -172,7 +355,7 @@ function App() {
       const nextRoomCode = await store.createRoom(activeNickname);
       navigateToRoom(nextRoomCode);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "방 생성에 실패했습니다.");
+      setMessage(error instanceof Error ? error.message : "Failed to create room.");
     } finally {
       setBusy(false);
     }
@@ -194,7 +377,7 @@ function App() {
       await store.joinRoom(normalizedCode, activeNickname);
       navigateToRoom(normalizedCode);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "입장에 실패했습니다.");
+      setMessage(error instanceof Error ? error.message : "Failed to join room.");
     } finally {
       setBusy(false);
     }
@@ -205,7 +388,7 @@ function App() {
       <main className="app-shell">
         <section className="panel centered">
           <div className="loader" />
-          <p>방 연결 준비 중</p>
+          <p>Preparing room connection</p>
         </section>
       </main>
     );
@@ -233,13 +416,13 @@ function App() {
           <button
             className={`icon-button sound-toggle${soundEnabled ? " is-on" : ""}`}
             type="button"
-            title={soundEnabled ? "사운드 끄기" : "사운드 켜기"}
+            title={soundEnabled ? "Mute sound" : "Enable sound"}
             onClick={() => {
               audio.arm();
               setSoundEnabled(!soundEnabled);
             }}
           >
-            {soundEnabled ? "♪" : "×"}
+            {soundEnabled ? "♪" : "♪"}
           </button>
           <span className={store.mode === "firebase" ? "mode live" : "mode"}>{store.mode}</span>
         </div>
@@ -268,7 +451,7 @@ function App() {
       )}
 
       {!hasFirebaseConfig && (
-        <p className="env-note">Firebase 환경변수가 없어서 이 브라우저의 로컬 데모 모드로 실행 중입니다.</p>
+        <p className="env-note">Firebase config is missing, so this browser is running in local demo mode.</p>
       )}
     </main>
   );
@@ -310,14 +493,14 @@ function HomeScreen({ busy, message, onCreateRoom, onJoinRoom }: HomeScreenProps
       <div className="home-content">
         <div className="home-title" aria-label="Lunch Fot">
           <span className="home-mark">
-            <img src="/hero/maam-food-logo.png" alt="MaAM Food" />
+            <img src="/other/maam-food-logo.png" alt="MaAM Food" />
           </span>
           <strong>Lunch Fot</strong>
         </div>
 
         <div className="home-menu" aria-label="Main menu">
           <button type="button" disabled={busy} onClick={() => setHomeMode("games")}>
-            {"\uac8c\uc784 \uc0dd\uc131"}
+            {"Create Game"}
           </button>
 
           {homeMode === "games" && (
@@ -341,7 +524,7 @@ function HomeScreen({ busy, message, onCreateRoom, onJoinRoom }: HomeScreenProps
           )}
 
           <button type="button" disabled={busy} onClick={() => setHomeMode("join")}>
-            {"\ubc29 \uc785\uc7a5"}
+            {"Join Room"}
           </button>
 
         </div>
@@ -361,7 +544,7 @@ function HomeScreen({ busy, message, onCreateRoom, onJoinRoom }: HomeScreenProps
               className="home-code-input"
               id="roomCode"
               maxLength={4}
-              placeholder={"\ubc29 \uc785\uc7a5 \ucf54\ub4dc"}
+              placeholder={"Room code"}
               value={joinCode}
               onChange={(event) => setJoinCode(event.target.value.toUpperCase())}
             />
@@ -401,7 +584,7 @@ type RoomGateProps = {
 function RoomGate({ busy, message, nickname, roomCode, setNickname, onJoinRoom }: RoomGateProps) {
   return (
     <section className="panel room-gate">
-      <p className="room-code-label">방 코드</p>
+      <p className="room-code-label">Room Code</p>
       <h1 className="room-code">{roomCode}</h1>
       <form
         className="join-form"
@@ -410,16 +593,16 @@ function RoomGate({ busy, message, nickname, roomCode, setNickname, onJoinRoom }
           void onJoinRoom(roomCode);
         }}
       >
-        <label htmlFor="gateNickname">닉네임</label>
+        <label htmlFor="gateNickname">Nickname</label>
         <input
           id="gateNickname"
           maxLength={12}
-          placeholder="예: Min"
+          placeholder="ex. Min"
           value={nickname}
           onChange={(event) => setNickname(event.target.value)}
         />
         <button className="primary-button" disabled={busy || !nickname.trim()} type="submit">
-          참가하기
+          Join
         </button>
       </form>
       {message && <p className="form-message">{message}</p>}
@@ -439,17 +622,27 @@ type GameRoomProps = {
 function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRoomProps) {
   const now = useNow(room.status === "countdown" || room.status === "playing");
   const prevStatusRef = useRef(room.status);
+  const prevRaceVisibleRef = useRef(false);
+  const [raceModelsReady, setRaceModelsReady] = useState(false);
+  const [raceModelFallback, setRaceModelFallback] = useState(false);
+  const [raceVisualKey, setRaceVisualKey] = useState("");
+  const [raceVisualOffset, setRaceVisualOffset] = useState(0);
   const isHost = room.hostUid === currentUid;
-  const countdownLeft = Math.max(0, Math.ceil(((room.startAt ?? now) - now) / 1000));
   const finalistIds = room.finalists?.length ? room.finalists : selectFinalists(room);
+  const finalistKey = finalistIds.slice(0, FINALIST_COUNT).join("|");
+  const currentRaceVisualKey = `${roomCode}:${room.seed}:${room.raceStartedAt ?? 0}`;
 
   useEffect(() => {
-    if (!isHost || room.status !== "countdown" || !room.startAt || now < room.startAt) {
+    loadLoadingBotModel().catch(console.error);
+  }, []);
+
+  useEffect(() => {
+    if (!isHost || room.status !== "countdown" || !room.startAt || now < room.startAt || !raceModelsReady) {
       return;
     }
 
     store.setPlaying(roomCode).catch(console.error);
-  }, [isHost, now, room.startAt, room.status, roomCode, store]);
+  }, [isHost, now, raceModelsReady, room.startAt, room.status, roomCode, store]);
 
   useEffect(() => {
     if (!isHost || room.status !== "playing" || !room.raceStartedAt || !hasRaceWinner(room, now)) {
@@ -460,7 +653,9 @@ function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRo
   }, [isHost, now, room, room.status, roomCode, store]);
 
   useEffect(() => {
-    if (room.status === "playing" && prevStatusRef.current !== "playing") {
+    const isRaceVisible = room.status === "playing" && raceModelsReady;
+
+    if (isRaceVisible && !prevRaceVisibleRef.current) {
       audio.playSpin(1.2);
     }
 
@@ -468,8 +663,66 @@ function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRo
       audio.playResult();
     }
 
+    prevRaceVisibleRef.current = isRaceVisible;
     prevStatusRef.current = room.status;
-  }, [audio, room.result, room.status]);
+  }, [audio, raceModelsReady, room.result, room.status]);
+
+  useEffect(() => {
+    if (room.status !== "countdown" && room.status !== "playing") {
+      setRaceModelsReady(false);
+      setRaceModelFallback(false);
+      return;
+    }
+
+    let cancelled = false;
+    setRaceModelsReady(false);
+    setRaceModelFallback(false);
+    const fallbackTimer = window.setTimeout(() => {
+      if (!cancelled) {
+        setRaceModelFallback(true);
+        setRaceModelsReady(true);
+      }
+    }, 12_000);
+
+    preloadRaceModels(finalistIds.slice(0, FINALIST_COUNT))
+      .then(() => {
+        if (!cancelled) {
+          window.clearTimeout(fallbackTimer);
+          setRaceModelFallback(false);
+          setRaceModelsReady(true);
+        }
+      })
+      .catch((error) => {
+        console.error(error);
+        if (!cancelled) {
+          window.clearTimeout(fallbackTimer);
+          setRaceModelFallback(true);
+          setRaceModelsReady(true);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(fallbackTimer);
+    };
+  }, [finalistKey, room.status]);
+
+  useEffect(() => {
+    if (room.status !== "playing" || !room.raceStartedAt || !raceModelsReady) {
+      if (room.status !== "playing") {
+        setRaceVisualKey("");
+        setRaceVisualOffset(0);
+      }
+      return;
+    }
+
+    if (raceVisualKey === currentRaceVisualKey) {
+      return;
+    }
+
+    setRaceVisualKey(currentRaceVisualKey);
+    setRaceVisualOffset(Math.max(0, now - room.raceStartedAt));
+  }, [currentRaceVisualKey, now, raceModelsReady, raceVisualKey, room.raceStartedAt, room.status]);
 
   const handleStart = () => {
     audio.arm();
@@ -481,19 +734,20 @@ function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRo
     store.resetRoom(roomCode).catch(console.error);
   };
 
-  if (room.status === "countdown") {
-    return (
-      <section className="countdown-stage">
-        <img className="countdown-logo" src="/hero/maam-food-logo.png" alt="MaAM Food" />
-        <div className="countdown-number">{countdownLeft || "GO"}</div>
-      </section>
-    );
+  const isRacePreparing = room.status === "countdown" || (room.status === "playing" && !raceModelsReady);
+  const raceVisualNow =
+    room.status === "playing" && room.raceStartedAt && raceVisualKey === currentRaceVisualKey
+      ? Math.max(room.raceStartedAt, now - raceVisualOffset)
+      : now;
+
+  if (isRacePreparing) {
+    return <RaceLoadingStage />;
   }
 
-  if (room.status === "playing") {
+  if (room.status === "playing" && raceModelsReady) {
     return (
       <section className="stage race-stage">
-        <PixiSushiRaceTrack room={room} now={now} />
+        {raceModelFallback ? <PixiSushiRaceTrack room={room} now={raceVisualNow} /> : <ThreeSushiRaceTrack room={room} now={raceVisualNow} />}
       </section>
     );
   }
@@ -543,18 +797,152 @@ function RoomSummary({ room, roomCode }: RoomSummaryProps) {
   return (
     <section className="room-summary">
       <div>
-        <span className="room-code-label">방 코드</span>
+        <span className="room-code-label">Room Code</span>
         <strong className="compact-code">{roomCode}</strong>
       </div>
       <div className="summary-stat">
-        <span>{playerCount(room)}명</span>
+        <span>{playerCount(room)} players</span>
         <span>{getRoomStepLabel(room.status)}</span>
       </div>
-      <button className="icon-button" type="button" title="초대 링크 복사" onClick={copyShareUrl}>
+      <button className="icon-button" type="button" title="Copy invite link" onClick={copyShareUrl}>
         {copied ? "OK" : "↗"}
       </button>
     </section>
   );
+}
+
+function RaceLoadingStage() {
+  const [logoSrc, setLogoSrc] = useState("/other/maam-food-logo.png");
+
+  return (
+    <section className="countdown-stage race-loading-stage" aria-label="Loading race assets">
+      <img
+        className="countdown-logo race-loading-logo"
+        src={logoSrc}
+        alt="MaAM Food"
+        onError={() => {
+          setLogoSrc((current) => (current === "/other/maam-food-logo.png" ? "/background/maam-food-logo.png" : "/other/lunchfot-icon-cutout.png"));
+        }}
+      />
+      <div className="race-loading-runway">
+        <LoadingBotRunner />
+        <div className="race-loading-dots" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function LoadingBotRunner() {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const [hasModel, setHasModel] = useState(false);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) {
+      return;
+    }
+
+    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    host.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.OrthographicCamera(-2.8, 2.8, 1.25, -1.05, 0.1, 20);
+    camera.position.set(0, 0.9, 5);
+    camera.lookAt(0, 0.18, 0);
+
+    const ambient = new THREE.HemisphereLight(0xfff8dc, 0x0f172a, 2.4);
+    scene.add(ambient);
+
+    const key = new THREE.DirectionalLight(0xffffff, 3.4);
+    key.position.set(1.4, 3.2, 4.2);
+    key.castShadow = true;
+    scene.add(key);
+
+    const fill = new THREE.DirectionalLight(0xfbbf24, 1.2);
+    fill.position.set(-2.8, 1.8, 2.4);
+    scene.add(fill);
+
+    let runner: THREE.Group | null = null;
+    let mixer: THREE.AnimationMixer | null = null;
+    let cancelled = false;
+    let frameId = 0;
+    let previousFrameTime = performance.now();
+
+    const resize = () => {
+      const rect = host.getBoundingClientRect();
+      renderer.setSize(Math.max(240, Math.round(rect.width)), Math.max(160, Math.round(rect.height)), false);
+    };
+
+    const renderFrame = (frameTime: number) => {
+      if (cancelled) {
+        return;
+      }
+
+      const delta = Math.min(0.05, Math.max(0, (frameTime - previousFrameTime) / 1000));
+      previousFrameTime = frameTime;
+      const progress = (frameTime % 1300) / 1300;
+
+      if (runner) {
+        runner.position.set(-0.42 + progress * 0.84, 0.08 + Math.sin(frameTime / 92) * 0.014, 0);
+        runner.rotation.z = Math.sin(frameTime / 105) * 0.025;
+      }
+
+      mixer?.update(delta);
+      renderer.render(scene, camera);
+      frameId = window.requestAnimationFrame(renderFrame);
+    };
+
+    resize();
+    window.addEventListener("resize", resize);
+
+    loadLoadingBotModel()
+      .then((loadedModel) => {
+        if (cancelled) {
+          return;
+        }
+
+        runner = cloneSkeleton(loadedModel.model) as THREE.Group;
+        runner.scale.setScalar(0.28);
+        runner.rotation.y = 0;
+        scene.add(runner);
+        setHasModel(true);
+
+        if (loadedModel.clips.length) {
+          mixer = new THREE.AnimationMixer(runner);
+          loadedModel.clips.forEach((clip) => {
+            const action = mixer?.clipAction(clip);
+            action?.setEffectiveTimeScale(2.15);
+            action?.play();
+          });
+        }
+      })
+      .catch((error) => {
+        console.error(error);
+        setHasModel(false);
+      });
+
+    frameId = window.requestAnimationFrame(renderFrame);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("resize", resize);
+      window.cancelAnimationFrame(frameId);
+      renderer.dispose();
+      if (renderer.domElement.parentElement === host) {
+        host.removeChild(renderer.domElement);
+      }
+    };
+  }, []);
+
+  return <div className={`loading-bot-runner${hasModel ? " has-3d-model" : ""}`} ref={hostRef} />;
 }
 
 type PlayerListProps = {
@@ -564,7 +952,7 @@ type PlayerListProps = {
 function PlayerList({ room }: PlayerListProps) {
   return (
     <section className="panel player-panel">
-      <h2>참가자</h2>
+      <h2>Players</h2>
       <ul className="player-list">
         {Object.entries(room.players).map(([uid, player]) => (
           <li key={uid}>
@@ -621,8 +1009,8 @@ function VoteBoard({ currentUid, isHost, nickname, room, roomCode, store, onStar
     <section className="vote-layout">
       <div className="vote-head">
         <div>
-          <p className="status-label">최종 투표</p>
-          <h2>20개 메뉴 중 5개 출전</h2>
+          <p className="status-label">Final Vote</p>
+          <h2>Pick 5 of 20 menus to race</h2>
         </div>
         <strong>
           {draftVotes.length}/{VOTE_LIMIT}
@@ -670,10 +1058,10 @@ function VoteBoard({ currentUid, isHost, nickname, room, roomCode, store, onStar
       <div className="start-row">
         {isHost ? (
           <button className="primary-button start-button" disabled={!hasAnyVote} type="button" onClick={onStart}>
-            상위 5개 레이스 시작
+            Start top 5 race
           </button>
         ) : (
-          <p className="waiting-text">방장이 시작하면 상위 5개 후보로 바로 출발합니다.</p>
+          <p className="waiting-text">The race starts when the host launches the top 5 finalists.</p>
         )}
       </div>
     </section>
@@ -731,7 +1119,7 @@ function RaceScoreboard({ room, now }: RaceScoreboardProps) {
           </span>
         ))}
       </div>
-      <div className={`event-light${activeEvents.length ? " is-active" : ""}`} title={activeEventLabel || "이벤트 대기"}>
+      <div className={`event-light${activeEvents.length ? " is-active" : ""}`} title={activeEventLabel || "Waiting for event"}>
         {activeEventIcons || "GO"}
       </div>
     </section>
@@ -1016,7 +1404,7 @@ function SushiRaceTrack({ room, now }: SushiRaceTrackProps) {
         context.font = "950 12px Pretendard, Inter, sans-serif";
         context.textAlign = "center";
         context.textBaseline = "middle";
-        context.fillText("탈락", runnerX, laneY + 18);
+        context.fillText("OUT", runnerX, laneY + 18);
       }
 
       if (lane.isFinished) {
@@ -1031,7 +1419,589 @@ function SushiRaceTrack({ room, now }: SushiRaceTrackProps) {
     <section className="race-canvas-shell" aria-label="Sushi race track">
       <canvas className="race-canvas" ref={canvasRef} />
       <div className="sr-only">
-        {laneStates.map((lane) => `${lane.rank}위 ${lane.menuName} ${lane.isEliminated ? "탈락" : formatRaceTime(lane.finishMs)}`).join(", ")}
+        {laneStates.map((lane) => `${lane.rank}. ${lane.menuName} ${lane.isEliminated ? "Out" : formatRaceTime(lane.finishMs)}`).join(", ")}
+      </div>
+    </section>
+  );
+}
+
+function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.OrthographicCamera | null>(null);
+  const trackGroupRef = useRef<THREE.Group | null>(null);
+  const racerGroupRef = useRef<THREE.Group | null>(null);
+  const railTexturesRef = useRef<THREE.Texture[]>([]);
+  const roomRef = useRef(room);
+  const raceNowOffsetRef = useRef(now - Date.now());
+  const modelCacheRef = useRef<Map<string, LoadedRaceModel>>(new Map());
+  const animationMixersRef = useRef<THREE.AnimationMixer[]>([]);
+  const racerObjectsRef = useRef<
+    Map<
+      string,
+      {
+        laneIndex: number;
+        runner: THREE.Group;
+        shadow: THREE.Mesh;
+        runAction?: THREE.AnimationAction;
+        grabAction?: THREE.AnimationAction;
+        fallAction?: THREE.AnimationAction;
+        grabbed: boolean;
+        plateHit: boolean;
+      }
+    >
+  >(new Map());
+  const [modelReady, setModelReady] = useState(0);
+  const laneStates = getRaceLaneStates(room, now);
+  const menuIds = laneStates.map((lane) => lane.menuId).join("|");
+
+  useEffect(() => {
+    roomRef.current = room;
+    raceNowOffsetRef.current = now - Date.now();
+  }, [now, room]);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) {
+      return;
+    }
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.OrthographicCamera(-5, 5, 2.8, -2.8, 0.1, 80);
+    camera.position.set(0, 4.1, 8.8);
+    camera.lookAt(0, 0.7, 0);
+
+    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.shadowMap.enabled = true;
+    host.appendChild(renderer.domElement);
+
+    const ambient = new THREE.HemisphereLight(0xfff4df, 0x1f2937, 2.2);
+    scene.add(ambient);
+    const key = new THREE.DirectionalLight(0xffedd5, 3.2);
+    key.position.set(-3.2, 7.2, 5.8);
+    key.castShadow = true;
+    scene.add(key);
+    const rim = new THREE.DirectionalLight(0x7dd3fc, 1.2);
+    rim.position.set(4.4, 3.6, -3.8);
+    scene.add(rim);
+
+    const trackGroup = new THREE.Group();
+    const racerGroup = new THREE.Group();
+    scene.add(trackGroup, racerGroup);
+
+    rendererRef.current = renderer;
+    sceneRef.current = scene;
+    cameraRef.current = camera;
+    trackGroupRef.current = trackGroup;
+    racerGroupRef.current = racerGroup;
+
+    let cancelled = false;
+    let frameId = 0;
+    let previousFrameTime = performance.now();
+    const renderFrame = (frameTime: number) => {
+      if (cancelled) {
+        return;
+      }
+
+      const delta = Math.min(0.05, Math.max(0, (frameTime - previousFrameTime) / 1000));
+      previousFrameTime = frameTime;
+      animationMixersRef.current.forEach((mixer) => mixer.update(delta));
+      const activeElapsedMs = roomRef.current.raceStartedAt ? Math.max(0, Date.now() + raceNowOffsetRef.current - roomRef.current.raceStartedAt) : 0;
+      const reversedRails = new Set(
+        (roomRef.current.raceEvents ?? [])
+          .filter((event) => event.type === "plate-stack" && activeElapsedMs >= event.triggerAtMs && activeElapsedMs <= event.triggerAtMs + event.durationMs)
+          .map((event) => event.railIndex ?? getPlateStackTargetLaneIndex(roomRef.current, event) % 2),
+      );
+      railTexturesRef.current.forEach((texture, index) => {
+        const railDirection = reversedRails.has(index) ? 1 : -1;
+        texture.offset.x = (texture.offset.x + railDirection * delta * (index === 0 ? 0.22 : 0.18)) % 1;
+      });
+
+      if (racerObjectsRef.current.size) {
+        const frameNow = Date.now() + raceNowOffsetRef.current;
+        const frameLaneStates = getRaceLaneStates(roomRef.current, frameNow);
+        const elapsedMs = roomRef.current.raceStartedAt ? Math.max(0, frameNow - roomRef.current.raceStartedAt) : 0;
+
+        frameLaneStates.forEach((lane, laneIndex) => {
+          const racer = racerObjectsRef.current.get(lane.menuId);
+          if (!racer) {
+            return;
+          }
+
+          const railIndex = laneIndex % 2;
+          const laneSlot = Math.floor(laneIndex / 2);
+          const stackOffset = (laneSlot - 1) * RACE_TRACK_STACK_Z_OFFSET;
+          const x = RACE_TRACK_START_X + lane.displayProgress * Math.max(1, RACE_TRACK_END_X - RACE_TRACK_START_X);
+          const z = RACE_TRACK_RAIL_ZS[railIndex] + stackOffset;
+          const grabEvent = (roomRef.current.raceEvents ?? []).find(
+            (event) => event.type === "chopsticks" && event.laneIndex === laneIndex && elapsedMs >= event.triggerAtMs,
+          );
+          const grabProgress = grabEvent
+            ? Math.min(1, Math.max(0, (elapsedMs - grabEvent.triggerAtMs) / Math.max(1, grabEvent.durationMs)))
+            : 0;
+          const plateHitEvent = (roomRef.current.raceEvents ?? []).find((event) => {
+            if (event.type !== "plate-stack" || getPlateStackTargetLaneIndex(roomRef.current, event) !== laneIndex) {
+              return false;
+            }
+
+            const impactAt = getPlateStackImpactElapsedMs(event);
+            return elapsedMs >= impactAt && elapsedMs <= impactAt + PLATE_STACK_HIT_HOLD_MS;
+          });
+          const isBeingGrabbed = Boolean(grabEvent && grabProgress < 1);
+          const isPlateHit = Boolean(plateHitEvent);
+          const liftProgress = isBeingGrabbed ? Math.min(1, Math.max(0, (grabProgress - 0.18) / 0.82)) : 0;
+          const bob = lane.isEliminated || isPlateHit ? 0 : Math.sin(frameNow / 88 + laneIndex) * 0.052;
+          const weirdShake = isBeingGrabbed ? Math.sin(frameNow / 28 + laneIndex) * 0.12 : 0;
+          const visible = lane.isEliminated ? isBeingGrabbed && grabProgress < 0.96 : true;
+
+          if (isBeingGrabbed !== racer.grabbed) {
+            racer.grabbed = isBeingGrabbed;
+            if (isBeingGrabbed) {
+              racer.runAction?.fadeOut(0.12);
+              racer.fallAction?.fadeOut(0.1);
+              racer.grabAction?.reset().fadeIn(0.12).play();
+            } else {
+              racer.grabAction?.fadeOut(0.12);
+              racer.runAction?.reset().fadeIn(0.12).play();
+            }
+          }
+
+          if (isPlateHit !== racer.plateHit) {
+            racer.plateHit = isPlateHit;
+            if (isPlateHit) {
+              racer.runAction?.fadeOut(0.1);
+              racer.grabAction?.fadeOut(0.1);
+              racer.fallAction?.reset().fadeIn(0.1).play();
+            } else {
+              racer.fallAction?.fadeOut(0.12);
+              racer.runAction?.reset().fadeIn(0.12).play();
+            }
+          }
+
+          racer.runner.position.set(x - liftProgress * 0.55 - (isPlateHit ? 0.1 : 0), 0.12 + RACE_TRACK_RAIL_Y_OFFSETS[railIndex] + bob + liftProgress * 1.96, z + liftProgress * 0.12);
+          racer.runner.rotation.x = isBeingGrabbed ? Math.sin(frameNow / 42) * 0.32 : isPlateHit ? -0.46 : 0;
+          racer.runner.rotation.y = isBeingGrabbed ? Math.sin(frameNow / 35) * 0.24 : 0;
+          racer.runner.rotation.z = isBeingGrabbed
+            ? -0.35 - liftProgress * 1.2 + weirdShake
+            : isPlateHit
+              ? -0.55 + Math.sin(frameNow / 55) * 0.06
+              : Math.sin(frameNow / 145 + laneIndex) * 0.05;
+          racer.runner.visible = visible;
+          racer.shadow.position.set(x, 0.02 + RACE_TRACK_SHADOW_Y_OFFSETS[railIndex], z);
+          (racer.shadow.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.14 * (1 - liftProgress));
+          racer.shadow.visible = visible;
+        });
+      }
+
+      renderer.render(scene, camera);
+      frameId = window.requestAnimationFrame(renderFrame);
+    };
+
+    frameId = window.requestAnimationFrame(renderFrame);
+
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frameId);
+      renderer.dispose();
+      host.removeChild(renderer.domElement);
+      railTexturesRef.current.forEach((texture) => texture.dispose());
+      railTexturesRef.current = [];
+      rendererRef.current = null;
+      sceneRef.current = null;
+      cameraRef.current = null;
+      trackGroupRef.current = null;
+      racerGroupRef.current = null;
+      modelCacheRef.current.clear();
+      animationMixersRef.current = [];
+      racerObjectsRef.current.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let usedCachedModel = false;
+
+    menuIds.split("|").forEach((menuId) => {
+      if (!menuId || modelCacheRef.current.has(menuId)) {
+        return;
+      }
+
+      const cachedModel = raceModelCache.get(menuId);
+      if (cachedModel) {
+        modelCacheRef.current.set(menuId, cachedModel);
+        usedCachedModel = true;
+        return;
+      }
+
+      loadRaceModel(menuId)
+        .then((loadedModel) => {
+          if (!cancelled) {
+            modelCacheRef.current.set(menuId, loadedModel);
+            setModelReady((tick) => tick + 1);
+          }
+        })
+        .catch(console.error);
+    });
+
+    if (usedCachedModel) {
+      setModelReady((tick) => tick + 1);
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [menuIds]);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    const trackGroup = trackGroupRef.current;
+    const racerGroup = racerGroupRef.current;
+
+    if (!host || !renderer || !scene || !camera || !trackGroup || !racerGroup) {
+      return;
+    }
+
+    if (!laneStates.every((lane) => modelCacheRef.current.has(lane.menuId))) {
+      racerGroup.clear();
+      animationMixersRef.current = [];
+      racerObjectsRef.current.clear();
+      return;
+    }
+
+    const width = Math.max(320, Math.round(host.getBoundingClientRect().width));
+    const height = Math.max(420, Math.round(host.getBoundingClientRect().height));
+    renderer.setSize(width, height, false);
+    const aspect = width / height;
+    const viewHeight = 5.6;
+    camera.left = (-viewHeight * aspect) / 2;
+    camera.right = (viewHeight * aspect) / 2;
+    camera.top = viewHeight / 2;
+    camera.bottom = -viewHeight / 2;
+    camera.updateProjectionMatrix();
+
+    trackGroup.clear();
+    railTexturesRef.current.forEach((texture) => texture.dispose());
+    railTexturesRef.current = [];
+    racerGroup.clear();
+    animationMixersRef.current = [];
+    racerObjectsRef.current.clear();
+
+    const shadowMaterial = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.14 });
+
+    const textureLoader = new THREE.TextureLoader();
+    RACE_TRACK_RAIL_ZS.forEach((railZ, railIndex) => {
+      const texture = textureLoader.load("/other/rail_lane_tile.png");
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.ClampToEdgeWrapping;
+      texture.repeat.set(5.2, 1);
+      texture.offset.x = railIndex * 0.18;
+      railTexturesRef.current.push(texture);
+
+      const rail = new THREE.Mesh(
+        new THREE.PlaneGeometry(RACE_TRACK_RAIL_WIDTH, RACE_TRACK_RAIL_DEPTH, 1, 1),
+        new THREE.MeshBasicMaterial({
+          map: texture,
+          transparent: true,
+          depthWrite: false,
+        }),
+      );
+      rail.position.set((RACE_TRACK_START_X + RACE_TRACK_END_X) / 2, 0, railZ);
+      rail.rotation.x = -Math.PI / 2;
+      rail.renderOrder = 1 + railIndex;
+      trackGroup.add(rail);
+    });
+
+    const finishGroup = new THREE.Group();
+    const finishMaterial = new THREE.MeshBasicMaterial({ color: 0x111827, transparent: true, opacity: 0.96, depthWrite: false });
+    const checkerRows = 5;
+    const checkerCols = 2;
+    const checkerWidth = RACE_TRACK_FINISH_WIDTH / checkerCols;
+    const checkerHeight = RACE_TRACK_RAIL_DEPTH / checkerRows;
+    RACE_TRACK_RAIL_ZS.forEach((railZ, railIndex) => {
+      const finishLine = new THREE.Mesh(new THREE.PlaneGeometry(RACE_TRACK_FINISH_WIDTH, RACE_TRACK_RAIL_DEPTH), finishMaterial);
+      finishLine.position.set(RACE_TRACK_END_X + 0.06, 0.025, railZ);
+      finishLine.rotation.x = -Math.PI / 2;
+      finishLine.renderOrder = 8;
+      finishGroup.add(finishLine);
+
+      for (let row = 0; row < checkerRows; row += 1) {
+        for (let col = 0; col < checkerCols; col += 1) {
+          const isWhite = (row + col + railIndex) % 2 === 0;
+          const checker = new THREE.Mesh(
+            new THREE.PlaneGeometry(checkerWidth, checkerHeight),
+            new THREE.MeshBasicMaterial({ color: isWhite ? 0xffffff : 0x111827, transparent: true, opacity: 0.98, depthWrite: false }),
+          );
+          checker.position.set(
+            RACE_TRACK_END_X + 0.061 + (col - 0.5) * checkerWidth,
+            0.032,
+            railZ - RACE_TRACK_RAIL_DEPTH / 2 + checkerHeight / 2 + row * checkerHeight,
+          );
+          checker.rotation.x = -Math.PI / 2;
+          checker.renderOrder = 9;
+          finishGroup.add(checker);
+        }
+      }
+    });
+    trackGroup.add(finishGroup);
+
+    laneStates.forEach((lane, laneIndex) => {
+      const railIndex = laneIndex % 2;
+      const laneSlot = Math.floor(laneIndex / 2);
+      const stackOffset = (laneSlot - 1) * RACE_TRACK_STACK_Z_OFFSET;
+      const x = RACE_TRACK_START_X + lane.displayProgress * Math.max(1, RACE_TRACK_END_X - RACE_TRACK_START_X);
+      const z = RACE_TRACK_RAIL_ZS[railIndex] + stackOffset;
+      const bob = lane.isEliminated ? 0 : Math.sin(now / 115 + laneIndex) * 0.055;
+      const loadedModel = modelCacheRef.current.get(lane.menuId);
+
+      if (!loadedModel) {
+        return;
+      }
+
+      const runner = cloneSkeleton(loadedModel.model) as THREE.Group;
+      const runnerRenderOrder = 20 + railIndex * 30 + laneSlot * 4;
+      applyRaceRenderPriority(runner, runnerRenderOrder);
+      runner.scale.multiplyScalar(width < 760 ? 0.42 : 0.504);
+      runner.position.set(x, 0.12 + RACE_TRACK_RAIL_Y_OFFSETS[railIndex] + bob, z);
+      runner.rotation.y = 0;
+      runner.rotation.z = Math.sin(now / 180 + laneIndex) * 0.04;
+      const mixer = new THREE.AnimationMixer(runner);
+      const runClip = loadedModel.clips[0];
+      const runAction = runClip ? mixer.clipAction(runClip) : undefined;
+      const grabAction = loadedModel.grabClip ? mixer.clipAction(loadedModel.grabClip) : undefined;
+      const fallAction = loadedModel.fallClip ? mixer.clipAction(loadedModel.fallClip) : undefined;
+
+      if (runAction) {
+        runAction.timeScale = 1.9;
+        runAction.play();
+        mixer.setTime(((now / 1000) + laneIndex * 0.18) % Math.max(0.1, runClip.duration));
+        animationMixersRef.current.push(mixer);
+      }
+
+      if (grabAction) {
+        grabAction.timeScale = 1.25;
+        grabAction.enabled = false;
+      }
+
+      if (fallAction) {
+        fallAction.timeScale = 1;
+        fallAction.enabled = false;
+        fallAction.setLoop(THREE.LoopOnce, 1);
+        fallAction.clampWhenFinished = true;
+      }
+
+      runner.traverse((child) => {
+        if (child instanceof THREE.Object3D) {
+          child.visible = !lane.isEliminated || Math.sin(now / 120) > -0.2;
+        }
+      });
+
+      const shadow = new THREE.Mesh(new THREE.CircleGeometry(0.3, 32), shadowMaterial);
+      shadow.renderOrder = runnerRenderOrder - 1;
+      shadow.rotation.x = -Math.PI / 2;
+      shadow.position.set(x, 0.02 + RACE_TRACK_SHADOW_Y_OFFSETS[railIndex], z);
+      shadow.scale.set(0.82, 0.26, 1);
+      racerGroup.add(shadow, runner);
+      racerObjectsRef.current.set(lane.menuId, { laneIndex, runner, shadow, runAction, grabAction, fallAction, grabbed: false, plateHit: false });
+    });
+
+    renderer.render(scene, camera);
+  }, [menuIds, modelReady, room.seed]);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+
+    if (!host || !renderer || !scene || !camera || !racerObjectsRef.current.size) {
+      return;
+    }
+
+    const width = Math.max(320, Math.round(host.getBoundingClientRect().width));
+    const height = Math.max(420, Math.round(host.getBoundingClientRect().height));
+    renderer.setSize(width, height, false);
+    const aspect = width / height;
+    const viewHeight = 5.6;
+    camera.left = (-viewHeight * aspect) / 2;
+    camera.right = (viewHeight * aspect) / 2;
+    camera.top = viewHeight / 2;
+    camera.bottom = -viewHeight / 2;
+    camera.updateProjectionMatrix();
+
+    const elapsedMs = room.raceStartedAt ? Math.max(0, now - room.raceStartedAt) : 0;
+
+    laneStates.forEach((lane, laneIndex) => {
+      const racer = racerObjectsRef.current.get(lane.menuId);
+      if (!racer) {
+        return;
+      }
+
+      const railIndex = laneIndex % 2;
+      const laneSlot = Math.floor(laneIndex / 2);
+      const stackOffset = (laneSlot - 1) * RACE_TRACK_STACK_Z_OFFSET;
+      const x = RACE_TRACK_START_X + lane.displayProgress * Math.max(1, RACE_TRACK_END_X - RACE_TRACK_START_X);
+      const z = RACE_TRACK_RAIL_ZS[railIndex] + stackOffset;
+      const grabEvent = (room.raceEvents ?? []).find(
+        (event) => event.type === "chopsticks" && event.laneIndex === laneIndex && elapsedMs >= event.triggerAtMs,
+      );
+      const grabProgress = grabEvent ? Math.min(1, Math.max(0, (elapsedMs - grabEvent.triggerAtMs) / Math.max(1, grabEvent.durationMs))) : 0;
+      const plateHitEvent = (room.raceEvents ?? []).find((event) => {
+        if (event.type !== "plate-stack" || getPlateStackTargetLaneIndex(room, event) !== laneIndex) {
+          return false;
+        }
+
+        const impactAt = getPlateStackImpactElapsedMs(event);
+        return elapsedMs >= impactAt && elapsedMs <= impactAt + PLATE_STACK_HIT_HOLD_MS;
+      });
+      const liftProgress = grabEvent ? Math.min(1, Math.max(0, (grabProgress - 0.18) / 0.82)) : 0;
+      const isPlateHit = Boolean(plateHitEvent);
+      const bob = lane.isEliminated || isPlateHit ? 0 : Math.sin(now / 115 + laneIndex) * 0.055;
+      const visible = lane.isEliminated ? Boolean(grabEvent && grabProgress < 0.96) : true;
+
+      racer.runner.position.set(x - liftProgress * 0.55 - (isPlateHit ? 0.1 : 0), 0.12 + RACE_TRACK_RAIL_Y_OFFSETS[railIndex] + bob + liftProgress * 1.96, z + liftProgress * 0.12);
+      racer.runner.rotation.x = isPlateHit ? -0.46 : 0;
+      racer.runner.rotation.z = grabEvent ? -0.35 - liftProgress * 1.2 : isPlateHit ? -0.55 : Math.sin(now / 180 + laneIndex) * 0.04;
+      racer.runner.visible = visible;
+      racer.shadow.position.set(x, 0.02 + RACE_TRACK_SHADOW_Y_OFFSETS[railIndex], z);
+      (racer.shadow.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.14 * (1 - liftProgress));
+      racer.shadow.visible = visible;
+    });
+  }, [laneStates, modelReady, now]);
+
+  const raceElapsedMs = room.raceStartedAt ? Math.max(0, now - room.raceStartedAt) : 0;
+  const handEvents = (room.raceEvents ?? [])
+    .filter((event) => event.type === "chopsticks" && event.laneIndex !== null)
+    .map((event) => {
+      const progress = Math.min(1, Math.max(0, (raceElapsedMs - event.triggerAtMs) / Math.max(1, event.durationMs)));
+      const laneIndex = event.laneIndex ?? 0;
+      const lane = laneStates[laneIndex];
+
+      if (!lane || progress <= 0 || progress >= 1) {
+        return null;
+      }
+
+      const railIndex = laneIndex % 2;
+      const laneSlot = Math.floor(laneIndex / 2);
+      const approachProgress = Math.min(1, progress / 0.22);
+      const liftProgress = Math.min(1, Math.max(0, (progress - 0.18) / 0.82));
+      const xPercent = 9 + lane.displayProgress * 84 - liftProgress * 10;
+      const targetY = (railIndex === 0 ? 28 : 77) + (laneSlot - 1) * RACE_EVENT_STACK_Y_OFFSET;
+      const yPercent = targetY - (1 - approachProgress) * 27 - liftProgress * 40;
+
+      return {
+        id: event.id,
+        progress,
+        xPercent,
+        yPercent,
+        opacity: Math.min(1, approachProgress * 1.4) * (1 - Math.max(0, progress - 0.86) / 0.14),
+        rotation: -18 + liftProgress * 11 + Math.sin(now / 45) * 2,
+        scale: 0.82 + approachProgress * 0.18,
+      };
+    })
+    .filter(Boolean) as Array<{
+    id: string;
+    progress: number;
+    xPercent: number;
+    yPercent: number;
+    opacity: number;
+    rotation: number;
+    scale: number;
+  }>;
+  const plateStackEvents = (room.raceEvents ?? [])
+    .filter((event) => event.type === "plate-stack")
+    .map((event) => {
+      const progress = Math.min(1, Math.max(0, (raceElapsedMs - event.triggerAtMs) / Math.max(1, event.durationMs)));
+      const laneIndex = getPlateStackTargetLaneIndex(room, event);
+      const lane = laneStates[laneIndex];
+
+      if (!lane || progress <= 0 || progress >= 1) {
+        return null;
+      }
+
+      const railIndex = laneIndex % 2;
+      const laneSlot = Math.floor(laneIndex / 2);
+      const impactProgress = Math.min(1, progress / PLATE_STACK_IMPACT_PROGRESS);
+      const hitProgress = Math.max(0, (progress - PLATE_STACK_IMPACT_PROGRESS) / (1 - PLATE_STACK_IMPACT_PROGRESS));
+      const hitFrame = hitProgress <= 0 ? 0 : Math.min(3, Math.floor(hitProgress * 5) + 1);
+      const imageUrl =
+        hitFrame === 1
+          ? "/other/10dish_item_hit_01.png"
+          : hitFrame === 2
+            ? "/other/10dish_item_hit_02.png"
+            : hitFrame >= 3
+              ? "/other/10dish_item_hit_03.png"
+              : "/other/10dish_item.png";
+      const targetX = 9 + lane.displayProgress * 84;
+      const railCenterY = railIndex === 0 ? 31 : 77;
+      const targetY = railCenterY + (laneSlot - 1) * (RACE_EVENT_STACK_Y_OFFSET * 0.35);
+      const xPercent = 103 - impactProgress * Math.max(1, 103 - targetX) + hitProgress * 1.2;
+
+      return {
+        id: event.id,
+        imageUrl,
+        xPercent,
+        yPercent: targetY,
+        opacity: hitFrame ? Math.max(0, 1 - Math.max(0, hitProgress - 0.72) / 0.28) : Math.min(1, progress / 0.12),
+        rotation: hitFrame ? -8 + Math.sin(now / 38) * 8 : -4 + Math.sin(now / 72) * 3,
+        scale: hitFrame ? 0.62 + hitProgress * 0.18 : 0.5 + impactProgress * 0.1,
+      };
+    })
+    .filter(Boolean) as Array<{
+    id: string;
+    imageUrl: string;
+    xPercent: number;
+    yPercent: number;
+    opacity: number;
+    rotation: number;
+    scale: number;
+  }>;
+  const hasPlateStackEvent = plateStackEvents.length > 0;
+
+  return (
+    <section className="race-canvas-shell race-canvas-shell--3d" aria-label="3D sushi race track">
+      <div className="race-rail-stage" aria-hidden="true">
+        {plateStackEvents.map((event) => (
+          <div
+            className="race-plate-event"
+            key={event.id}
+            style={
+              {
+                "--plate-x": `${event.xPercent}%`,
+                "--plate-y": `${event.yPercent}%`,
+                "--plate-opacity": event.opacity,
+                "--plate-rotate": `${event.rotation}deg`,
+                "--plate-scale": event.scale,
+                backgroundImage: `url("${event.imageUrl}")`,
+              } as CSSProperties
+            }
+          />
+        ))}
+        {handEvents.map((event) => (
+          <div
+            className="race-hand-event"
+            key={event.id}
+            style={
+              {
+                "--hand-x": `${event.xPercent}%`,
+                "--hand-y": `${event.yPercent}%`,
+                "--hand-opacity": event.opacity,
+                "--hand-rotate": `${event.rotation}deg`,
+                "--hand-scale": event.scale,
+              } as CSSProperties
+            }
+          />
+        ))}
+      </div>
+      <div className="race-three-host" ref={hostRef} />
+      <div className="sr-only">
+        {laneStates.map((lane) => `${lane.rank}. ${lane.menuName} ${lane.isEliminated ? "Out" : formatRaceTime(lane.finishMs)}`).join(", ")}
       </div>
     </section>
   );
@@ -1151,7 +2121,7 @@ function PixiSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
       app.stage.addChild(rollers);
 
       const laneTag = new Text({
-        text: `${railIndex + 1} 레일`,
+        text: `Rail ${railIndex + 1}`,
         style: { fill: 0xffffff, fontFamily: "Pretendard, Inter, sans-serif", fontSize: 13, fontWeight: "900" },
       });
       laneTag.x = padding;
@@ -1235,7 +2205,7 @@ function PixiSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
 
       if (hasReverse) {
         const sweat = new Text({
-          text: "💦",
+          text: "↩",
           style: { fontFamily: "Apple Color Emoji, Segoe UI Emoji", fontSize: 22 },
         });
         sweat.x = runnerX + 30;
@@ -1254,7 +2224,7 @@ function PixiSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
         const badge = new Graphics();
         badge.roundRect(runnerX - 26, runnerY - 54, 52, 26, 13).fill({ color: 0x991b1b, alpha: 0.96 });
         const eliminated = new Text({
-          text: "탈락",
+          text: "OUT",
           style: { fill: 0xffffff, fontFamily: "Pretendard, Inter, sans-serif", fontSize: 13, fontWeight: "900" },
         });
         eliminated.anchor.set(0.5);
@@ -1282,7 +2252,7 @@ function PixiSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
     <section className="race-canvas-shell" aria-label="Sushi race track">
       <div className="race-pixi-host" ref={hostRef} />
       <div className="sr-only">
-        {laneStates.map((lane) => `${lane.rank}위 ${lane.menuName} ${lane.isEliminated ? "탈락" : formatRaceTime(lane.finishMs)}`).join(", ")}
+        {laneStates.map((lane) => `${lane.rank}. ${lane.menuName} ${lane.isEliminated ? "Out" : formatRaceTime(lane.finishMs)}`).join(", ")}
       </div>
     </section>
   );
@@ -1319,10 +2289,10 @@ function ResultView({ room }: ResultViewProps) {
       <section className="result-popup__rank-panel" aria-label="Race rankings">
         <div className="result-rankings">
           <article className="result-rank-row result-rank-row--head">
-            <strong>순위</strong>
-            <span>음식명</span>
-            <em>걸린시간</em>
-            <span>선택사용자이름</span>
+            <strong>Rank</strong>
+            <span>Menu</span>
+            <em>Time</em>
+            <span>Selected By</span>
           </article>
           {rankings.map((entry) => (
             <article className="result-rank-row" key={entry.menuId}>
@@ -1339,7 +2309,8 @@ function ResultView({ room }: ResultViewProps) {
 }
 
 function MenuImage({ menu, variant = "thumb" }: { menu: MenuCard; variant?: "preview" | "thumb" | "runner" | "winner" }) {
-  const primarySrc = variant === "preview" || variant === "thumb" ? getFoodImageUrl(menu) : menu.imageUrl;
+  const primarySrc = variant === "winner" ? getResultCardImageUrl(menu) : variant === "preview" || variant === "thumb" ? getFoodImageUrl(menu) : menu.imageUrl;
+  const fallbackSrc = primarySrc === menu.imageUrl ? menu.fallbackImageUrl : menu.imageUrl;
   const [src, setSrc] = useState(primarySrc);
 
   useEffect(() => {
@@ -1352,7 +2323,9 @@ function MenuImage({ menu, variant = "thumb" }: { menu: MenuCard; variant?: "pre
         alt=""
         src={src}
         onError={() => {
-          if (src !== menu.fallbackImageUrl) {
+          if (src !== fallbackSrc) {
+            setSrc(fallbackSrc);
+          } else if (src !== menu.fallbackImageUrl) {
             setSrc(menu.fallbackImageUrl);
           }
         }}

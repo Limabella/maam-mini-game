@@ -4,8 +4,13 @@ import type { RaceEvent, RaceEventType, RaceResultRankEntry, ResultEntry, RoomSt
 
 export const FINALIST_COUNT = 5;
 export const VOTE_LIMIT = 5;
-export const RACE_MIN_DURATION_MS = 30_000;
-export const RACE_MAX_DURATION_MS = 180_000;
+export const RACE_MIN_DURATION_MS = 45_000;
+export const RACE_MAX_DURATION_MS = 62_000;
+
+export const PLATE_STACK_EVENT_COUNT = 4;
+export const PLATE_STACK_IMPACT_PROGRESS = 0.62;
+export const PLATE_STACK_HIT_HOLD_MS = 3_000;
+const PLATE_STACK_SLOW_PENALTY_MS = 1_800;
 
 export type VoteTally = {
   menuId: string;
@@ -118,19 +123,37 @@ export const createRaceEvents = (finalists: string[], seed: number, durationMs: 
     },
   ];
 
-  if (playerCount > 2) {
-    const chopstickLane = pickLane();
+  const plateSlots = [0.28, 0.44, 0.6, 0.76]
+    .map((slot) => clampTrigger(durationMs * slot + jitter(0.035)))
+    .sort((a, b) => a - b);
+
+  const plateStackEventCount = 3 + Math.floor(random() * 2);
+
+  plateSlots.slice(0, Math.min(PLATE_STACK_EVENT_COUNT, plateStackEventCount)).forEach((triggerAtMs, index) => {
+    const railIndex = Math.floor(random() * 2);
     events.push({
-      id: "chopsticks-1",
-      type: "chopsticks",
-      triggerAtMs: clampTrigger(durationMs * 0.68 + jitter()),
-      durationMs: 2400,
-      laneIndex: chopstickLane,
-      menuId: finalists[chopstickLane] ?? finalists[0],
-      penaltyMs: 0,
-      eliminates: true,
+      id: `plate-stack-${index + 1}`,
+      type: "plate-stack",
+      triggerAtMs,
+      durationMs: 3400,
+      railIndex,
+      laneIndex: null,
+      penaltyMs: PLATE_STACK_SLOW_PENALTY_MS,
+      affectsAll: true,
     });
-  }
+  });
+
+  const chopstickLane = pickLane();
+  events.push({
+    id: "chopsticks-1",
+    type: "chopsticks",
+    triggerAtMs: clampTrigger(durationMs * (playerCount > 2 ? 0.68 : 0.58) + jitter()),
+    durationMs: 2800,
+    laneIndex: chopstickLane,
+    menuId: finalists[chopstickLane] ?? finalists[0],
+    penaltyMs: 0,
+    eliminates: true,
+  });
 
   return events.sort((a, b) => a.triggerAtMs - b.triggerAtMs);
 };
@@ -160,6 +183,72 @@ const getLanePenaltyMs = (room: RoomState, laneIndex: number, elapsedMs = Number
     .reduce((total, event) => total + event.penaltyMs, 0);
 };
 
+export const getPlateStackImpactElapsedMs = (event: RaceEvent) => Math.round(event.triggerAtMs + event.durationMs * PLATE_STACK_IMPACT_PROGRESS);
+
+const getLanePenaltyMsBeforePlateHit = (room: RoomState, laneIndex: number, elapsedMs: number, currentPlateEvent: RaceEvent) => {
+  return (room.raceEvents ?? [])
+    .filter(
+      (event) =>
+        event.type !== "chopsticks" &&
+        event.id !== currentPlateEvent.id &&
+        (event.type !== "plate-stack" || event.triggerAtMs < currentPlateEvent.triggerAtMs) &&
+        (event.affectsAll || event.laneIndex === laneIndex) &&
+        elapsedMs >= event.triggerAtMs,
+    )
+    .reduce((total, event) => {
+      const hitHoldMs = event.type === "plate-stack" && getPlateStackTargetLaneIndex(room, event) === laneIndex ? PLATE_STACK_HIT_HOLD_MS : 0;
+      return total + event.penaltyMs + hitHoldMs;
+    }, 0);
+};
+
+export const getPlateStackTargetLaneIndex = (room: RoomState, event: RaceEvent) => {
+  const finalists = room.finalists?.length ? room.finalists.slice(0, FINALIST_COUNT) : selectFinalists(room);
+  const impactElapsedMs = getPlateStackImpactElapsedMs(event);
+  const targetRailIndex = event.railIndex ?? event.laneIndex ?? 0;
+  let bestLaneIndex = 0;
+  let bestProgress = -1;
+
+  finalists.forEach((menuId, laneIndex) => {
+    if (laneIndex % 2 !== targetRailIndex) {
+      return;
+    }
+
+    if (getEliminationEvent(room, laneIndex, impactElapsedMs)) {
+      return;
+    }
+
+    const baseFinishMs = getRaceBaseFinishMs(room, menuId, laneIndex);
+    const penaltyMs = getLanePenaltyMsBeforePlateHit(room, laneIndex, impactElapsedMs, event);
+    const progress = Math.min(1, impactElapsedMs / Math.max(1, baseFinishMs + penaltyMs));
+
+    if (progress > bestProgress) {
+      bestProgress = progress;
+      bestLaneIndex = laneIndex;
+    }
+  });
+
+  if (bestProgress < 0) {
+    const fallbackLaneIndex = finalists.findIndex((_, laneIndex) => laneIndex % 2 === targetRailIndex);
+    return fallbackLaneIndex >= 0 ? fallbackLaneIndex : 0;
+  }
+
+  return bestLaneIndex;
+};
+
+const getPlateStackHitHoldMs = (room: RoomState, laneIndex: number, elapsedMs = Number.POSITIVE_INFINITY) => {
+  return (room.raceEvents ?? [])
+    .filter((event) => event.type === "plate-stack" && getPlateStackTargetLaneIndex(room, event) === laneIndex)
+    .reduce((total, event) => {
+      const impactElapsedMs = getPlateStackImpactElapsedMs(event);
+
+      if (elapsedMs < impactElapsedMs) {
+        return total;
+      }
+
+      return total + Math.min(PLATE_STACK_HIT_HOLD_MS, elapsedMs - impactElapsedMs);
+    }, 0);
+};
+
 const getEliminationEvent = (room: RoomState, laneIndex: number, elapsedMs = Number.POSITIVE_INFINITY) => {
   return (room.raceEvents ?? []).find(
     (event) => event.eliminates && event.laneIndex === laneIndex && elapsedMs >= event.triggerAtMs,
@@ -171,7 +260,7 @@ export const getLaneFinishMs = (room: RoomState, menuId: string, laneIndex: numb
     return Number.POSITIVE_INFINITY;
   }
 
-  return getRaceBaseFinishMs(room, menuId, laneIndex) + getLanePenaltyMs(room, laneIndex);
+  return getRaceBaseFinishMs(room, menuId, laneIndex) + getLanePenaltyMs(room, laneIndex) + getPlateStackHitHoldMs(room, laneIndex);
 };
 
 export const getActiveRaceEvents = (room: RoomState, now: number) => {
@@ -181,7 +270,7 @@ export const getActiveRaceEvents = (room: RoomState, now: number) => {
     return [];
   }
 
-  const elapsedMs = now - startedAt;
+  const elapsedMs = Math.max(0, now - startedAt);
   return (room.raceEvents ?? []).filter(
     (event) => elapsedMs >= event.triggerAtMs && elapsedMs <= event.triggerAtMs + event.durationMs,
   );
@@ -197,14 +286,16 @@ export const getRaceLaneStates = (room: RoomState, now: number): RaceLaneState[]
     const menu = menuById.get(menuId);
     const racer = getRacerForMenu(menuId);
     const eliminationEvent = getEliminationEvent(room, laneIndex, elapsedMs);
-    const visibleElapsed = eliminationEvent ? eliminationEvent.triggerAtMs : elapsedMs;
-    const penaltyMs = getLanePenaltyMs(room, laneIndex, visibleElapsed);
+    const hitHoldMs = getPlateStackHitHoldMs(room, laneIndex, elapsedMs);
+    const visibleElapsed = Math.max(0, (eliminationEvent ? eliminationEvent.triggerAtMs : elapsedMs) - hitHoldMs);
     const baseFinishMs = getRaceBaseFinishMs(room, menuId, laneIndex);
-    const finishMs = eliminationEvent ? Number.POSITIVE_INFINITY : baseFinishMs + getLanePenaltyMs(room, laneIndex);
-    const effectiveElapsed = Math.max(0, visibleElapsed - penaltyMs);
-    const rawProgress = eliminationEvent ? Math.min(0.985, effectiveElapsed / Math.max(1, baseFinishMs)) : Math.min(1, effectiveElapsed / Math.max(1, baseFinishMs));
-    const laneWave = Math.sin((elapsedMs / 520) + laneIndex * 1.4) * 0.006;
-    const displayProgress = Math.min(1, Math.max(0, rawProgress + (rawProgress < 1 ? laneWave : 0)));
+    const finishMs = eliminationEvent ? Number.POSITIVE_INFINITY : baseFinishMs + getLanePenaltyMs(room, laneIndex) + getPlateStackHitHoldMs(room, laneIndex);
+    const penaltyMs = getLanePenaltyMs(room, laneIndex, visibleElapsed) + getPlateStackHitHoldMs(room, laneIndex, elapsedMs);
+    const progressFinishMs = eliminationEvent ? baseFinishMs + penaltyMs : finishMs;
+    const rawProgress = eliminationEvent
+      ? Math.min(0.985, visibleElapsed / Math.max(1, progressFinishMs))
+      : Math.min(1, visibleElapsed / Math.max(1, progressFinishMs));
+    const displayProgress = rawProgress;
     const activeEventTypes = activeEvents
       .filter((event) => event.affectsAll || event.laneIndex === laneIndex)
       .map((event) => event.type);
@@ -303,7 +394,7 @@ export const calculateRaceResult = (room: RoomState): ResultEntry => {
 
 export const formatRaceTime = (valueMs: number) => {
   if (!Number.isFinite(valueMs)) {
-    return "탈락";
+    return "Out";
   }
 
   return `${(valueMs / 1000).toFixed(2)}s`;

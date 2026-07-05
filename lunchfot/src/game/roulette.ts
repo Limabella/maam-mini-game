@@ -218,7 +218,7 @@ export const calculateResult = (room: RoomState): ResultEntry | null => {
     }
 
     const fallbackThrowAt = room.spinStartAt + ROUND_DURATION_MS;
-    const fallback = buildRankingEntry(room, "system", "자동 선택", fallbackThrowAt);
+    const fallback = buildRankingEntry(room, "system", "Auto Pick", fallbackThrowAt);
 
     return {
       menuId: fallback.menuId,

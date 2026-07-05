@@ -28,13 +28,14 @@ export type MenuVoteEntry = {
   updatedAt: number;
 };
 
-export type RaceEventType = "chopsticks" | "reverse-belt" | "green-tea";
+export type RaceEventType = "chopsticks" | "reverse-belt" | "green-tea" | "plate-stack";
 
 export type RaceEvent = {
   id: string;
   type: RaceEventType;
   triggerAtMs: number;
   durationMs: number;
+  railIndex?: number;
   laneIndex: number | null;
   menuId?: string;
   penaltyMs: number;

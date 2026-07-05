@@ -46,6 +46,8 @@ const LOCAL_ROOM_PREFIX = "lunch-sushi-race:room:";
 const listeners = new Map<string, Set<(room: RoomState | null) => void>>();
 const CURRENT_MENU_IDS = menuCards.map((menu) => menu.id);
 const CURRENT_MENU_ID_SET = new Set(CURRENT_MENU_IDS);
+const RACE_COUNTDOWN_MS = 10_000;
+const RACE_VISUAL_START_DELAY_MS = 1_200;
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -153,7 +155,7 @@ const createRaceStartPatch = (room: RoomState) => {
   return {
     status: "countdown" as const,
     seed,
-    startAt: Date.now() + 3200,
+    startAt: Date.now() + RACE_COUNTDOWN_MS,
     raceStartedAt: null,
     raceDurationMs,
     finalists,
@@ -268,12 +270,12 @@ const firebaseJoinRoom = async (database: Database, uid: string, roomCode: strin
   const snapshot = await get(roomRef);
 
   if (!snapshot.exists()) {
-    throw new Error("방을 찾을 수 없습니다.");
+    throw new Error("Room not found.");
   }
 
   const room = normalizeRoom(snapshot.val() as RoomState);
   if (room.status !== "lobby") {
-    throw new Error("이미 시작된 방입니다.");
+    throw new Error("This room has already started.");
   }
 
   await set(ref(database, `rooms/${normalizedCode}/players/${uid}`), {
@@ -335,7 +337,7 @@ const firebaseSetPlaying = async (database: Database, roomCode: string) => {
 
   await update(roomRef, {
     status: "playing",
-    raceStartedAt: Date.now(),
+    raceStartedAt: Date.now() + RACE_VISUAL_START_DELAY_MS,
   });
 };
 
@@ -404,11 +406,11 @@ const createLocalStore = (): RoomStore => {
       const room = readLocalRoom(normalizedCode);
 
       if (!room) {
-        throw new Error("방을 찾을 수 없습니다.");
+        throw new Error("Room not found.");
       }
 
       if (room.status !== "lobby") {
-        throw new Error("이미 시작된 방입니다.");
+        throw new Error("This room has already started.");
       }
 
       writeLocalRoom(normalizedCode, {
@@ -467,7 +469,7 @@ const createLocalStore = (): RoomStore => {
       writeLocalRoom(roomCode, {
         ...room,
         status: "playing",
-        raceStartedAt: Date.now(),
+        raceStartedAt: Date.now() + RACE_VISUAL_START_DELAY_MS,
       });
     },
     finishGame: async (roomCode, result) => {

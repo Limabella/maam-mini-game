@@ -25,7 +25,7 @@
 }
 
 .home-screen.home-screen--legacy .home-content::before {
-  content: "점심 뭐 먹지?";
+  content: "What should we eat?";
   display: block;
 }
 

@@ -1,12 +1,29 @@
 # LunchFot
 
-LunchFot is a real-time lunch selection mini game. Players enter a shared room, vote for menu cards, watch the selected foods race, and get a final ranked result.
+> Live on Firebase Hosting: https://lunchfot.web.app  
+> Last deployed: 2026-07-04, project `burger-910f0`, hosting site `lunchfot`
+
+LunchFot is a real-time lunch selection mini game. Players create or join a room, vote for menu cards, watch the finalists race on animated conveyor rails, and receive a compact ranked result.
+
+This build is a demo version. Core room creation, voting, racing, and result display flows are available, while game balance and event variety are still being refined.
 
 ![LunchFot main screen](docs/main-screen.png)
 
-## Firebase Site
+## Live Site
 
-- Hosting: https://lunchfot.web.app
+- Firebase Hosting: https://lunchfot.web.app
+
+## Highlights
+
+- Room creation and join flow with shareable room URLs
+- Firebase Realtime Database support with local demo fallback
+- Food vote selection using 20 menu images
+- Loading transition with a running GLB bot
+- 3D GLB character race powered by Three.js
+- Animated conveyor rail objects with independent lane flow
+- Three.js finish line aligned to the rail end
+- Result screen with a winning card and compact ranking table
+- Asset Lab modal for character motion and sprite testing
 
 ## Run Locally
 
@@ -29,6 +46,12 @@ VITE_FIREBASE_APP_ID=...
 
 If Firebase config is missing, the app runs in local demo mode.
 
+## Build
+
+```bash
+npm run build
+```
+
 ## Deploy
 
 ```bash
@@ -38,17 +61,16 @@ npx firebase-tools deploy --only hosting --project burger-910f0
 
 `firebase.json` deploys the Vite `dist` folder and rewrites all routes to `index.html`, so direct room URLs such as `/room/ABCD` work after deployment.
 
-## Current Features
+## Assets
 
-- Main menu and room join flow
-- Realtime room state with Firebase/local fallback
-- Food card voting with 20 menu images
-- Countdown transition screen
-- Sushi race play screen
-- Result page with winning card and compact ranking table
-- Asset Lab for character motion and sprite testing
+- Menu racer GLBs: `public/3d_glb/3m_001.glb` through `public/3d_glb/3m_020.glb`
+- Loading runner GLB: `public/3d_glb/winlose_bgj.glb`
+- Race rail texture: `public/other/rail_lane_tile.png`
+- Plate event sprites: `public/other/10dish_item*.png`
+- Work-in-progress authoring assets under `public/character_assets/` are ignored by Git.
 
 ## Planned Work
 
-- Event motion effects
-- Running 3D model, motion, and effects
+- Improve the multi-vote system
+- Add character-specific special skill events
+- Refine game balance, motion variants, and race effects
