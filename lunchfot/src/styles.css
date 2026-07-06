@@ -704,7 +704,7 @@ input:focus {
 
 .lobby-info-row {
   display: grid;
-  grid-template-columns: max-content minmax(260px, auto);
+  grid-template-columns: max-content minmax(260px, 1fr) max-content;
   align-items: start;
   justify-content: space-between;
   gap: 12px;
@@ -774,6 +774,23 @@ input:focus {
   color: #0f766e;
   background: #ecfdf5;
   box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.08);
+}
+
+.vote-notice {
+  align-self: center;
+  justify-self: center;
+  max-width: 620px;
+  margin: 0;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 750;
+  line-height: 1.35;
+  text-align: center;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+.vote-notice span {
+  font-weight: 950;
 }
 
 .player-panel {
@@ -888,7 +905,7 @@ input:focus {
 .finalist-preview,
 .finalist-strip {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -1344,29 +1361,6 @@ input:focus {
   filter:
     drop-shadow(0 18px 24px rgba(18, 10, 4, 0.46))
     drop-shadow(0 0 14px rgba(255, 197, 79, 0.22));
-  pointer-events: none;
-  will-change: left, top, transform, opacity;
-}
-
-.race-plate-event {
-  position: absolute;
-  left: var(--plate-x);
-  top: var(--plate-y);
-  z-index: 5;
-  width: clamp(78px, 6.4vw, 132px);
-  aspect-ratio: 2 / 3;
-  opacity: var(--plate-opacity);
-  transform:
-    translate(-50%, -100%)
-    rotate(var(--plate-rotate))
-    scale(var(--plate-scale));
-  transform-origin: 50% 100%;
-  background-position: center;
-  background-repeat: no-repeat;
-  background-size: contain;
-  filter:
-    drop-shadow(0 10px 15px rgba(18, 10, 4, 0.38))
-    drop-shadow(0 0 10px rgba(255, 187, 58, 0.22));
   pointer-events: none;
   will-change: left, top, transform, opacity;
 }
@@ -2050,6 +2044,12 @@ input:focus {
     width: 100%;
     max-width: none;
     justify-self: stretch;
+  }
+
+  .lobby-info-row .vote-notice {
+    justify-self: stretch;
+    max-width: none;
+    text-align: left;
   }
 
   .lobby-info-row .player-panel {

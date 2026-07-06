@@ -2,8 +2,8 @@ import { menuById, menuCards } from "../data/menuCards";
 import { getMenuDisplayName, getRacerForMenu } from "../data/sushiRacers";
 import type { RaceEvent, RaceEventType, RaceResultRankEntry, ResultEntry, RoomState } from "../types";
 
-export const FINALIST_COUNT = 5;
-export const VOTE_LIMIT = 5;
+export const FINALIST_COUNT = 6;
+export const VOTE_LIMIT = 6;
 export const RACE_MIN_DURATION_MS = 45_000;
 export const RACE_MAX_DURATION_MS = 62_000;
 
@@ -85,8 +85,11 @@ export const getVoteTallies = (room: RoomState): VoteTally[] => {
 };
 
 export const selectFinalists = (room: RoomState) => {
+  const tieRandom = createSeededRandom(room.seed ^ 0x766f7465);
+  const tieBreakers = new Map(getCandidateIds(room).map((menuId) => [menuId, tieRandom()]));
+
   return getVoteTallies(room)
-    .sort((a, b) => b.votes - a.votes || a.index - b.index)
+    .sort((a, b) => b.votes - a.votes || (tieBreakers.get(a.menuId) ?? 0) - (tieBreakers.get(b.menuId) ?? 0))
     .slice(0, FINALIST_COUNT)
     .map((entry) => entry.menuId);
 };

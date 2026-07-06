@@ -1,4 +1,4 @@
-﻿import {
+import {
   useEffect,
   useMemo,
   useRef,
@@ -75,6 +75,9 @@ const playerCount = (room: RoomState | null) => Object.keys(room?.players ?? {})
 
 const getVoteCount = (room: RoomState, uid: string) => room.votes?.[uid]?.menuIds.length ?? 0;
 
+const VOTE_WINDOW_MS = 60_000;
+const getVoteWindowRemainingMs = (room: RoomState, now: number) => Math.max(0, room.createdAt + VOTE_WINDOW_MS - now);
+
 const getAssetStem = (menu: MenuCard) => {
   const match = menu.imageUrl.match(/\/([^/]+)\.png$/);
   return match?.[1] ?? menu.id.replace("-lm", "");
@@ -96,6 +99,11 @@ const RACE_TRACK_SHADOW_Y_OFFSETS = [-0.02, 0] as const;
 const RACE_TRACK_RAIL_WIDTH = RACE_TRACK_END_X - RACE_TRACK_START_X + 0.9;
 const RACE_TRACK_RAIL_DEPTH = 0.82;
 const RACE_TRACK_FINISH_WIDTH = 0.18;
+const RACE_PLATE_SPRITE_WIDTH = 0.58;
+const RACE_PLATE_SPRITE_HEIGHT = 0.87;
+const RACE_PLATE_ENTRY_X = RACE_TRACK_END_X + 0.92;
+const RACE_PLATE_RAIL_BASE_Y = [0.19, 0.21] as const;
+const RACE_PLATE_RAIL_FRONT_Z_OFFSET = 0.08;
 
 const getRaceModelUrl = (menuId: string) => {
   const menuIndex = Math.max(0, menuCards.findIndex((menu) => menu.id === menuId));
@@ -276,7 +284,7 @@ const GAME_PHASES: Array<{
 }> = [
   { id: "sushi", label: "Conveyor Sushi Race", enabled: true },
   { id: "pending", label: "Coming Soon", enabled: false },
-  { id: "dart", label: "Dart Game", enabled: false },
+  { id: "dart", label: "Bibimbap's Top Spin", enabled: false },
 ];
 
 const FLOW_STEPS: Record<FlowStepId, string> = {
@@ -297,10 +305,10 @@ const ROOM_STATUS_TO_STEP: Record<RoomStatus, FlowStepId> = {
 const getRoomStepLabel = (status: RoomStatus) => FLOW_STEPS[ROOM_STATUS_TO_STEP[status]];
 
 const RACE_EVENT_META: Record<RaceEventType, { icon: string; label: string }> = {
-  chopsticks: { icon: "🥢", label: "Hand Grab" },
-  "reverse-belt": { icon: "↩", label: "Reverse Rail" },
-  "green-tea": { icon: "🍵", label: "Green Tea Slip" },
-  "plate-stack": { icon: "🍽", label: "Plate Rush" },
+  chopsticks: { icon: "\u{1F962}", label: "Hand Grab" },
+  "reverse-belt": { icon: "\u21A9", label: "Reverse Rail" },
+  "green-tea": { icon: "\u{1F375}", label: "Green Tea Slip" },
+  "plate-stack": { icon: "\u{1F37D}\uFE0F", label: "Plate Rush" },
 };
 
 
@@ -422,7 +430,7 @@ function App() {
               setSoundEnabled(!soundEnabled);
             }}
           >
-            {soundEnabled ? "♪" : "♪"}
+            {soundEnabled ? "\u266A" : "\u266A"}
           </button>
           <span className={store.mode === "firebase" ? "mode live" : "mode"}>{store.mode}</span>
         </div>
@@ -488,7 +496,7 @@ function HomeScreen({ busy, message, onCreateRoom, onJoinRoom }: HomeScreenProps
         title="Asset Lab"
         onClick={() => setAssetLabOpen(true)}
       >
-        ⚙
+        {"\u2699"}
       </button>
       <div className="home-content">
         <div className="home-title" aria-label="Lunch Fot">
@@ -562,7 +570,7 @@ function HomeScreen({ busy, message, onCreateRoom, onJoinRoom }: HomeScreenProps
         <div className="asset-modal__backdrop" onClick={() => setAssetLabOpen(false)} />
         <section className="asset-modal__panel">
           <button className="asset-modal__close" type="button" aria-label="Close Asset Lab" onClick={() => setAssetLabOpen(false)}>
-            ×
+            X
           </button>
           <AssetLab embedded />
         </section>
@@ -620,7 +628,7 @@ type GameRoomProps = {
 };
 
 function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRoomProps) {
-  const now = useNow(room.status === "countdown" || room.status === "playing");
+  const now = useNow(room.status === "lobby" || room.status === "countdown" || room.status === "playing");
   const prevStatusRef = useRef(room.status);
   const prevRaceVisibleRef = useRef(false);
   const [raceModelsReady, setRaceModelsReady] = useState(false);
@@ -764,6 +772,7 @@ function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRo
     <section className="stage lobby-stage">
       <div className="lobby-info-row">
         <RoomSummary room={room} roomCode={roomCode} />
+        <VoteNotice room={room} now={now} />
         <PlayerList room={room} />
       </div>
       <VoteBoard
@@ -783,6 +792,16 @@ type RoomSummaryProps = {
   room: RoomState;
   roomCode: string;
 };
+
+function VoteNotice({ room, now }: { room: RoomState; now: number }) {
+  const remainingSeconds = Math.ceil(getVoteWindowRemainingMs(room, now) / 1000);
+
+  return (
+    <p className="vote-notice">
+      <span>{"\u203B"} {remainingSeconds > 0 ? `${remainingSeconds}s vote time` : "Vote time ended"}</span> Invite players and choose 1-6 menus. Top 6 racers enter; ties are randomized.
+    </p>
+  );
+}
 
 function RoomSummary({ room, roomCode }: RoomSummaryProps) {
   const shareUrl = `${window.location.origin}/room/${roomCode}`;
@@ -805,7 +824,7 @@ function RoomSummary({ room, roomCode }: RoomSummaryProps) {
         <span>{getRoomStepLabel(room.status)}</span>
       </div>
       <button className="icon-button" type="button" title="Copy invite link" onClick={copyShareUrl}>
-        {copied ? "OK" : "↗"}
+        {copied ? "OK" : "\u2197"}
       </button>
     </section>
   );
@@ -978,6 +997,8 @@ type VoteBoardProps = {
 
 function VoteBoard({ currentUid, isHost, nickname, room, roomCode, store, onStart }: VoteBoardProps) {
   const savedVotes = room.votes?.[currentUid]?.menuIds ?? [];
+  const now = useNow(room.status === "lobby");
+  const votingOpen = getVoteWindowRemainingMs(room, now) > 0;
   const [draftVotes, setDraftVotes] = useState(savedVotes);
   const tallies = useMemo(() => getVoteTallies(room), [room]);
   const tallyByMenuId = useMemo(() => new Map(tallies.map((entry) => [entry.menuId, entry.votes])), [tallies]);
@@ -988,6 +1009,10 @@ function VoteBoard({ currentUid, isHost, nickname, room, roomCode, store, onStar
   }, [savedVotes.join("|")]);
 
   const submitVote = (menuIds: string[]) => {
+    if (!votingOpen) {
+      return;
+    }
+
     setDraftVotes(menuIds);
     store.submitVote(roomCode, nickname, menuIds).catch(console.error);
   };
@@ -1010,7 +1035,7 @@ function VoteBoard({ currentUid, isHost, nickname, room, roomCode, store, onStar
       <div className="vote-head">
         <div>
           <p className="status-label">Final Vote</p>
-          <h2>Pick 5 of 20 menus to race</h2>
+          <h2>Pick 1-6 of 20 menus to race</h2>
         </div>
         <strong>
           {draftVotes.length}/{VOTE_LIMIT}
@@ -1036,7 +1061,7 @@ function VoteBoard({ currentUid, isHost, nickname, room, roomCode, store, onStar
         {menuCards.map((menu) => {
           const racer = getRacerForMenu(menu.id);
           const selected = draftVotes.includes(menu.id);
-          const locked = !selected && draftVotes.length >= VOTE_LIMIT;
+          const locked = !votingOpen || (!selected && draftVotes.length >= VOTE_LIMIT);
 
           return (
             <button
@@ -1058,10 +1083,10 @@ function VoteBoard({ currentUid, isHost, nickname, room, roomCode, store, onStar
       <div className="start-row">
         {isHost ? (
           <button className="primary-button start-button" disabled={!hasAnyVote} type="button" onClick={onStart}>
-            Start top 5 race
+            Start top 6 race
           </button>
         ) : (
-          <p className="waiting-text">The race starts when the host launches the top 5 finalists.</p>
+          <p className="waiting-text">The race starts when the host launches the top 6 finalists.</p>
         )}
       </div>
     </section>
@@ -1099,7 +1124,7 @@ function RaceScoreboard({ room, now }: RaceScoreboardProps) {
   const startedAt = room.raceStartedAt ?? now;
   const elapsedMs = Math.max(0, now - startedAt);
   const activeEvents = getActiveRaceEvents(room, now);
-  const activeEventLabel = activeEvents.map((event) => RACE_EVENT_META[event.type].label).join(" · ");
+  const activeEventLabel = activeEvents.map((event) => RACE_EVENT_META[event.type].label).join("  / ");
   const activeEventIcons = activeEvents.map((event) => RACE_EVENT_META[event.type].icon).join("");
   const leaders = getRaceLaneStates(room, now)
     .slice()
@@ -1337,7 +1362,7 @@ function SushiRaceTrack({ room, now }: SushiRaceTrackProps) {
         context.beginPath();
         context.ellipse(runnerX - 28, beltY + beltHeight - 6, 21, 7, 0.18, 0, Math.PI * 2);
         context.fill();
-        drawEmoji(context, "🍵", runnerX - 54, beltY + 10, 23);
+        drawEmoji(context, "!!", runnerX - 54, beltY + 10, 23);
       }
 
       if (hasReverse) {
@@ -1347,8 +1372,7 @@ function SushiRaceTrack({ room, now }: SushiRaceTrackProps) {
         context.fillStyle = "#ffffff";
         context.font = "950 24px Inter, sans-serif";
         context.textAlign = "center";
-        context.textBaseline = "middle";
-        context.fillText("↩", finishX - 44, laneMidY + 1);
+        context.fillText("REV", finishX - 44, laneMidY + 1);
       }
 
       context.fillStyle = "rgba(17, 24, 39, 0.2)";
@@ -1408,7 +1432,7 @@ function SushiRaceTrack({ room, now }: SushiRaceTrackProps) {
       }
 
       if (lane.isFinished) {
-        drawEmoji(context, "🏁", runnerX + 46, runnerY - 18, 22);
+        drawEmoji(context, "FIN", runnerX + 46, runnerY - 18, 22);
       }
 
       context.restore();
@@ -1432,6 +1456,9 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
   const cameraRef = useRef<THREE.OrthographicCamera | null>(null);
   const trackGroupRef = useRef<THREE.Group | null>(null);
   const racerGroupRef = useRef<THREE.Group | null>(null);
+  const plateGroupRef = useRef<THREE.Group | null>(null);
+  const plateTextureCacheRef = useRef<Map<string, THREE.Texture>>(new Map());
+  const plateSpritesRef = useRef<Map<string, THREE.Sprite>>(new Map());
   const railTexturesRef = useRef<THREE.Texture[]>([]);
   const roomRef = useRef(room);
   const raceNowOffsetRef = useRef(now - Date.now());
@@ -1490,13 +1517,105 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
 
     const trackGroup = new THREE.Group();
     const racerGroup = new THREE.Group();
-    scene.add(trackGroup, racerGroup);
+    const plateGroup = new THREE.Group();
+    scene.add(trackGroup, plateGroup, racerGroup);
 
     rendererRef.current = renderer;
     sceneRef.current = scene;
     cameraRef.current = camera;
     trackGroupRef.current = trackGroup;
     racerGroupRef.current = racerGroup;
+    plateGroupRef.current = plateGroup;
+    const plateTextureLoader = new THREE.TextureLoader();
+    const getPlateTexture = (imageUrl: string) => {
+      const cachedTexture = plateTextureCacheRef.current.get(imageUrl);
+      if (cachedTexture) {
+        return cachedTexture;
+      }
+
+      const texture = plateTextureLoader.load(imageUrl);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      plateTextureCacheRef.current.set(imageUrl, texture);
+      return texture;
+    };
+    const syncPlateSprites = (frameRoom: RoomState, frameLaneStates: ReturnType<typeof getRaceLaneStates>, elapsedMs: number, frameNow: number) => {
+      const activeIds = new Set<string>();
+      (frameRoom.raceEvents ?? [])
+        .filter((event) => event.type === "plate-stack")
+        .forEach((event) => {
+          const progress = Math.min(1, Math.max(0, (elapsedMs - event.triggerAtMs) / Math.max(1, event.durationMs)));
+          const laneIndex = getPlateStackTargetLaneIndex(frameRoom, event);
+          const lane = frameLaneStates[laneIndex];
+
+          if (!lane || progress <= 0 || progress >= 1) {
+            return;
+          }
+
+          const railIndex = laneIndex % 2;
+          const laneSlot = Math.floor(laneIndex / 2);
+          const impactProgress = Math.min(1, progress / PLATE_STACK_IMPACT_PROGRESS);
+          const hitProgress = Math.max(0, (progress - PLATE_STACK_IMPACT_PROGRESS) / (1 - PLATE_STACK_IMPACT_PROGRESS));
+          const hitFrame = hitProgress <= 0 ? 0 : Math.min(3, Math.floor(hitProgress * 5) + 1);
+          const imageUrl =
+            hitFrame === 1
+              ? "/other/10dish_item_hit_01.png"
+              : hitFrame === 2
+                ? "/other/10dish_item_hit_02.png"
+                : hitFrame >= 3
+                  ? "/other/10dish_item_hit_03.png"
+                  : "/other/10dish_item.png";
+          const targetX = RACE_TRACK_START_X + lane.displayProgress * Math.max(1, RACE_TRACK_END_X - RACE_TRACK_START_X);
+          const x = RACE_PLATE_ENTRY_X - impactProgress * Math.max(0.1, RACE_PLATE_ENTRY_X - targetX) + hitProgress * 0.1;
+          const stackOffset = (laneSlot - 1) * RACE_TRACK_STACK_Z_OFFSET;
+          const scale = 0.62;
+          const width = RACE_PLATE_SPRITE_WIDTH * scale;
+          const height = RACE_PLATE_SPRITE_HEIGHT * scale;
+          const y = RACE_PLATE_RAIL_BASE_Y[railIndex] + height / 2;
+          const z = RACE_TRACK_RAIL_ZS[railIndex] + stackOffset + RACE_PLATE_RAIL_FRONT_Z_OFFSET;
+          const opacity = hitFrame ? Math.max(0, 1 - Math.max(0, hitProgress - 0.72) / 0.28) : Math.min(1, progress / 0.12);
+          const rotation = THREE.MathUtils.degToRad(hitFrame ? -8 + Math.sin(frameNow / 38) * 8 : -4 + Math.sin(frameNow / 72) * 3);
+
+          let sprite = plateSpritesRef.current.get(event.id);
+          if (!sprite) {
+            sprite = new THREE.Sprite(
+              new THREE.SpriteMaterial({
+                map: getPlateTexture(imageUrl),
+                transparent: true,
+                depthWrite: false,
+                depthTest: false,
+              }),
+            );
+            sprite.center.set(0.5, 0.5);
+            plateSpritesRef.current.set(event.id, sprite);
+            plateGroup.add(sprite);
+          }
+
+          const material = sprite.material as THREE.SpriteMaterial;
+          if (sprite.userData.imageUrl !== imageUrl) {
+            material.map = getPlateTexture(imageUrl);
+            material.needsUpdate = true;
+            sprite.userData.imageUrl = imageUrl;
+          }
+
+          material.opacity = opacity;
+          material.rotation = rotation;
+          sprite.position.set(x, y, z);
+          sprite.scale.set(width, height, 1);
+          sprite.renderOrder = 60 + railIndex * 10 + laneSlot;
+          sprite.visible = opacity > 0.01;
+          activeIds.add(event.id);
+        });
+
+      plateSpritesRef.current.forEach((sprite, eventId) => {
+        if (activeIds.has(eventId)) {
+          return;
+        }
+
+        plateGroup.remove(sprite);
+        sprite.material.dispose();
+        plateSpritesRef.current.delete(eventId);
+      });
+    };
 
     let cancelled = false;
     let frameId = 0;
@@ -1520,11 +1639,12 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
         texture.offset.x = (texture.offset.x + railDirection * delta * (index === 0 ? 0.22 : 0.18)) % 1;
       });
 
-      if (racerObjectsRef.current.size) {
-        const frameNow = Date.now() + raceNowOffsetRef.current;
-        const frameLaneStates = getRaceLaneStates(roomRef.current, frameNow);
-        const elapsedMs = roomRef.current.raceStartedAt ? Math.max(0, frameNow - roomRef.current.raceStartedAt) : 0;
+      const frameNow = Date.now() + raceNowOffsetRef.current;
+      const frameLaneStates = getRaceLaneStates(roomRef.current, frameNow);
+      const elapsedMs = roomRef.current.raceStartedAt ? Math.max(0, frameNow - roomRef.current.raceStartedAt) : 0;
+      syncPlateSprites(roomRef.current, frameLaneStates, elapsedMs, frameNow);
 
+      if (racerObjectsRef.current.size) {
         frameLaneStates.forEach((lane, laneIndex) => {
           const racer = racerObjectsRef.current.get(lane.menuId);
           if (!racer) {
@@ -1609,11 +1729,16 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
       host.removeChild(renderer.domElement);
       railTexturesRef.current.forEach((texture) => texture.dispose());
       railTexturesRef.current = [];
+      plateSpritesRef.current.forEach((sprite) => sprite.material.dispose());
+      plateSpritesRef.current.clear();
+      plateTextureCacheRef.current.forEach((texture) => texture.dispose());
+      plateTextureCacheRef.current.clear();
       rendererRef.current = null;
       sceneRef.current = null;
       cameraRef.current = null;
       trackGroupRef.current = null;
       racerGroupRef.current = null;
+      plateGroupRef.current = null;
       modelCacheRef.current.clear();
       animationMixersRef.current = [];
       racerObjectsRef.current.clear();
@@ -1662,13 +1787,17 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
     const camera = cameraRef.current;
     const trackGroup = trackGroupRef.current;
     const racerGroup = racerGroupRef.current;
+    const plateGroup = plateGroupRef.current;
 
-    if (!host || !renderer || !scene || !camera || !trackGroup || !racerGroup) {
+    if (!host || !renderer || !scene || !camera || !trackGroup || !racerGroup || !plateGroup) {
       return;
     }
 
     if (!laneStates.every((lane) => modelCacheRef.current.has(lane.menuId))) {
       racerGroup.clear();
+      plateGroup.clear();
+      plateSpritesRef.current.forEach((sprite) => sprite.material.dispose());
+      plateSpritesRef.current.clear();
       animationMixersRef.current = [];
       racerObjectsRef.current.clear();
       return;
@@ -1689,6 +1818,9 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
     railTexturesRef.current.forEach((texture) => texture.dispose());
     railTexturesRef.current = [];
     racerGroup.clear();
+    plateGroup.clear();
+    plateSpritesRef.current.forEach((sprite) => sprite.material.dispose());
+    plateSpritesRef.current.clear();
     animationMixersRef.current = [];
     racerObjectsRef.current.clear();
 
@@ -1914,75 +2046,10 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
     rotation: number;
     scale: number;
   }>;
-  const plateStackEvents = (room.raceEvents ?? [])
-    .filter((event) => event.type === "plate-stack")
-    .map((event) => {
-      const progress = Math.min(1, Math.max(0, (raceElapsedMs - event.triggerAtMs) / Math.max(1, event.durationMs)));
-      const laneIndex = getPlateStackTargetLaneIndex(room, event);
-      const lane = laneStates[laneIndex];
-
-      if (!lane || progress <= 0 || progress >= 1) {
-        return null;
-      }
-
-      const railIndex = laneIndex % 2;
-      const laneSlot = Math.floor(laneIndex / 2);
-      const impactProgress = Math.min(1, progress / PLATE_STACK_IMPACT_PROGRESS);
-      const hitProgress = Math.max(0, (progress - PLATE_STACK_IMPACT_PROGRESS) / (1 - PLATE_STACK_IMPACT_PROGRESS));
-      const hitFrame = hitProgress <= 0 ? 0 : Math.min(3, Math.floor(hitProgress * 5) + 1);
-      const imageUrl =
-        hitFrame === 1
-          ? "/other/10dish_item_hit_01.png"
-          : hitFrame === 2
-            ? "/other/10dish_item_hit_02.png"
-            : hitFrame >= 3
-              ? "/other/10dish_item_hit_03.png"
-              : "/other/10dish_item.png";
-      const targetX = 9 + lane.displayProgress * 84;
-      const railCenterY = railIndex === 0 ? 31 : 77;
-      const targetY = railCenterY + (laneSlot - 1) * (RACE_EVENT_STACK_Y_OFFSET * 0.35);
-      const xPercent = 103 - impactProgress * Math.max(1, 103 - targetX) + hitProgress * 1.2;
-
-      return {
-        id: event.id,
-        imageUrl,
-        xPercent,
-        yPercent: targetY,
-        opacity: hitFrame ? Math.max(0, 1 - Math.max(0, hitProgress - 0.72) / 0.28) : Math.min(1, progress / 0.12),
-        rotation: hitFrame ? -8 + Math.sin(now / 38) * 8 : -4 + Math.sin(now / 72) * 3,
-        scale: hitFrame ? 0.62 + hitProgress * 0.18 : 0.5 + impactProgress * 0.1,
-      };
-    })
-    .filter(Boolean) as Array<{
-    id: string;
-    imageUrl: string;
-    xPercent: number;
-    yPercent: number;
-    opacity: number;
-    rotation: number;
-    scale: number;
-  }>;
-  const hasPlateStackEvent = plateStackEvents.length > 0;
 
   return (
     <section className="race-canvas-shell race-canvas-shell--3d" aria-label="3D sushi race track">
       <div className="race-rail-stage" aria-hidden="true">
-        {plateStackEvents.map((event) => (
-          <div
-            className="race-plate-event"
-            key={event.id}
-            style={
-              {
-                "--plate-x": `${event.xPercent}%`,
-                "--plate-y": `${event.yPercent}%`,
-                "--plate-opacity": event.opacity,
-                "--plate-rotate": `${event.rotation}deg`,
-                "--plate-scale": event.scale,
-                backgroundImage: `url("${event.imageUrl}")`,
-              } as CSSProperties
-            }
-          />
-        ))}
         {handEvents.map((event) => (
           <div
             className="race-hand-event"
@@ -2205,7 +2272,7 @@ function PixiSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
 
       if (hasReverse) {
         const sweat = new Text({
-          text: "↩",
+          text: "\u{1F4A6}",
           style: { fontFamily: "Apple Color Emoji, Segoe UI Emoji", fontSize: 22 },
         });
         sweat.x = runnerX + 30;
@@ -2235,7 +2302,7 @@ function PixiSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
 
       if (lane.isFinished) {
         const flag = new Text({
-          text: "🏁",
+          text: "FIN",
           style: { fontFamily: "Apple Color Emoji, Segoe UI Emoji", fontSize: 24 },
         });
         flag.anchor.set(0.5);
@@ -2335,4 +2402,3 @@ function MenuImage({ menu, variant = "thumb" }: { menu: MenuCard; variant?: "pre
 }
 
 export default App;
-
