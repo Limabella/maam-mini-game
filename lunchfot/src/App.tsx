@@ -310,6 +310,38 @@ const RACE_EVENT_META: Record<RaceEventType, { icon: string; label: string }> = 
   "green-tea": { icon: "\u{1F375}", label: "Green Tea Slip" },
   "plate-stack": { icon: "\u{1F37D}\uFE0F", label: "Plate Rush" },
 };
+type IdleWindow = Window & { requestIdleCallback?: (callback: () => void) => number };
+
+const preloadImage = (src: string) =>
+  new Promise<void>((resolve) => {
+    const image = new Image();
+    image.decoding = "async";
+    image.onload = () => resolve();
+    image.onerror = () => resolve();
+    image.src = src;
+  });
+
+const preloadUiImages = () => {
+  const urls = new Set([
+    "/background/sushi-vote-selection-bg-blur-kimono.png",
+    "/background/sushi-restaurant-play-bg.png",
+    "/other/maam-food-logo.png",
+    "/other/lunchfot-icon-cutout.png",
+    "/other/10dish_item.png",
+    "/other/10dish_item_hit_01.png",
+    "/other/10dish_item_hit_02.png",
+    "/other/10dish_item_hit_03.png",
+    ...menuCards.map(getFoodImageUrl),
+  ]);
+
+  const start = () => urls.forEach((url) => void preloadImage(url));
+  const requestIdleCallback = (window as IdleWindow).requestIdleCallback;
+  if (requestIdleCallback) {
+    requestIdleCallback(start);
+  } else {
+    window.setTimeout(start, 80);
+  }
+};
 
 
 function App() {
@@ -323,6 +355,7 @@ function App() {
   const audio = useArcadeAudio(soundEnabled, setSoundEnabled, room?.status === "playing");
 
   useEffect(() => {
+    preloadUiImages();
     createRoomStore()
       .then(setStore)
       .catch((error: Error) => setMessage(error.message));
@@ -897,7 +930,7 @@ function LoadingBotRunner() {
 
     const resize = () => {
       const rect = host.getBoundingClientRect();
-      renderer.setSize(Math.max(240, Math.round(rect.width)), Math.max(160, Math.round(rect.height)), false);
+      renderer.setSize(Math.max(96, Math.round(rect.width)), Math.max(64, Math.round(rect.height)), false);
     };
 
     const renderFrame = (frameTime: number) => {
@@ -910,7 +943,7 @@ function LoadingBotRunner() {
       const progress = (frameTime % 1300) / 1300;
 
       if (runner) {
-        runner.position.set(-0.42 + progress * 0.84, 0.08 + Math.sin(frameTime / 92) * 0.014, 0);
+        runner.position.set(-0.34 + progress * 0.68, -0.28 + Math.sin(frameTime / 92) * 0.01, 0);
         runner.rotation.z = Math.sin(frameTime / 105) * 0.025;
       }
 
@@ -929,7 +962,7 @@ function LoadingBotRunner() {
         }
 
         runner = cloneSkeleton(loadedModel.model) as THREE.Group;
-        runner.scale.setScalar(0.28);
+        runner.scale.setScalar(0.18);
         runner.rotation.y = 0;
         scene.add(runner);
         setHasModel(true);
@@ -938,7 +971,7 @@ function LoadingBotRunner() {
           mixer = new THREE.AnimationMixer(runner);
           loadedModel.clips.forEach((clip) => {
             const action = mixer?.clipAction(clip);
-            action?.setEffectiveTimeScale(2.15);
+            action?.setEffectiveTimeScale(2.35);
             action?.play();
           });
         }
@@ -2388,6 +2421,8 @@ function MenuImage({ menu, variant = "thumb" }: { menu: MenuCard; variant?: "pre
     <span className={`menu-image menu-image--${variant}`}>
       <img
         alt=""
+        decoding="async"
+        loading="eager"
         src={src}
         onError={() => {
           if (src !== fallbackSrc) {
