@@ -102,8 +102,21 @@ const RACE_TRACK_FINISH_WIDTH = 0.18;
 const RACE_PLATE_SPRITE_WIDTH = 0.58;
 const RACE_PLATE_SPRITE_HEIGHT = 0.87;
 const RACE_PLATE_ENTRY_X = RACE_TRACK_END_X + 0.92;
-const RACE_PLATE_RAIL_BASE_Y = [0.19, 0.21] as const;
-const RACE_PLATE_RAIL_FRONT_Z_OFFSET = 0.08;
+const RACE_PLATE_RAIL_BOTTOM_Y = 0.035;
+const RACE_PLATE_RAIL_FRONT_Z_OFFSET = 0.025;
+const CHOPSTICK_CONTACT_PROGRESS = 0.42;
+const CHOPSTICK_VISIBLE_END_PROGRESS = 0.96;
+
+const getChopstickGrabPhase = (progress: number) => {
+  const approachProgress = Math.min(1, progress / CHOPSTICK_CONTACT_PROGRESS);
+  const carryProgress = Math.min(1, Math.max(0, (progress - CHOPSTICK_CONTACT_PROGRESS) / (1 - CHOPSTICK_CONTACT_PROGRESS)));
+
+  return {
+    approachProgress,
+    carryProgress,
+    isContacted: progress >= CHOPSTICK_CONTACT_PROGRESS,
+  };
+};
 
 const getRaceModelUrl = (menuId: string) => {
   const menuIndex = Math.max(0, menuCards.findIndex((menu) => menu.id === menuId));
@@ -1603,7 +1616,7 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
           const scale = 0.62;
           const width = RACE_PLATE_SPRITE_WIDTH * scale;
           const height = RACE_PLATE_SPRITE_HEIGHT * scale;
-          const y = RACE_PLATE_RAIL_BASE_Y[railIndex] + height / 2;
+          const y = RACE_PLATE_RAIL_BOTTOM_Y + RACE_TRACK_RAIL_Y_OFFSETS[railIndex] + height / 2;
           const z = RACE_TRACK_RAIL_ZS[railIndex] + stackOffset + RACE_PLATE_RAIL_FRONT_Z_OFFSET;
           const opacity = hitFrame ? Math.max(0, 1 - Math.max(0, hitProgress - 0.72) / 0.28) : Math.min(1, progress / 0.12);
           const rotation = THREE.MathUtils.degToRad(hitFrame ? -8 + Math.sin(frameNow / 38) * 8 : -4 + Math.sin(frameNow / 72) * 3);
@@ -1695,6 +1708,7 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
           const grabProgress = grabEvent
             ? Math.min(1, Math.max(0, (elapsedMs - grabEvent.triggerAtMs) / Math.max(1, grabEvent.durationMs)))
             : 0;
+          const grabPhase = getChopstickGrabPhase(grabProgress);
           const plateHitEvent = (roomRef.current.raceEvents ?? []).find((event) => {
             if (event.type !== "plate-stack" || getPlateStackTargetLaneIndex(roomRef.current, event) !== laneIndex) {
               return false;
@@ -1703,12 +1717,12 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
             const impactAt = getPlateStackImpactElapsedMs(event);
             return elapsedMs >= impactAt && elapsedMs <= impactAt + PLATE_STACK_HIT_HOLD_MS;
           });
-          const isBeingGrabbed = Boolean(grabEvent && grabProgress < 1);
+          const isBeingGrabbed = Boolean(grabEvent && grabPhase.isContacted && grabProgress < 1);
           const isPlateHit = Boolean(plateHitEvent);
-          const liftProgress = isBeingGrabbed ? Math.min(1, Math.max(0, (grabProgress - 0.18) / 0.82)) : 0;
+          const liftProgress = isBeingGrabbed ? grabPhase.carryProgress : 0;
           const bob = lane.isEliminated || isPlateHit ? 0 : Math.sin(frameNow / 88 + laneIndex) * 0.052;
           const weirdShake = isBeingGrabbed ? Math.sin(frameNow / 28 + laneIndex) * 0.12 : 0;
-          const visible = lane.isEliminated ? isBeingGrabbed && grabProgress < 0.96 : true;
+          const visible = lane.isEliminated ? Boolean(grabEvent && grabProgress < CHOPSTICK_VISIBLE_END_PROGRESS) : true;
 
           if (isBeingGrabbed !== racer.grabbed) {
             racer.grabbed = isBeingGrabbed;
@@ -2017,6 +2031,7 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
         (event) => event.type === "chopsticks" && event.laneIndex === laneIndex && elapsedMs >= event.triggerAtMs,
       );
       const grabProgress = grabEvent ? Math.min(1, Math.max(0, (elapsedMs - grabEvent.triggerAtMs) / Math.max(1, grabEvent.durationMs))) : 0;
+      const grabPhase = getChopstickGrabPhase(grabProgress);
       const plateHitEvent = (room.raceEvents ?? []).find((event) => {
         if (event.type !== "plate-stack" || getPlateStackTargetLaneIndex(room, event) !== laneIndex) {
           return false;
@@ -2025,14 +2040,14 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
         const impactAt = getPlateStackImpactElapsedMs(event);
         return elapsedMs >= impactAt && elapsedMs <= impactAt + PLATE_STACK_HIT_HOLD_MS;
       });
-      const liftProgress = grabEvent ? Math.min(1, Math.max(0, (grabProgress - 0.18) / 0.82)) : 0;
+      const liftProgress = grabEvent && grabPhase.isContacted ? grabPhase.carryProgress : 0;
       const isPlateHit = Boolean(plateHitEvent);
       const bob = lane.isEliminated || isPlateHit ? 0 : Math.sin(now / 115 + laneIndex) * 0.055;
-      const visible = lane.isEliminated ? Boolean(grabEvent && grabProgress < 0.96) : true;
+      const visible = lane.isEliminated ? Boolean(grabEvent && grabProgress < CHOPSTICK_VISIBLE_END_PROGRESS) : true;
 
       racer.runner.position.set(x - liftProgress * 0.55 - (isPlateHit ? 0.1 : 0), 0.12 + RACE_TRACK_RAIL_Y_OFFSETS[railIndex] + bob + liftProgress * 1.96, z + liftProgress * 0.12);
       racer.runner.rotation.x = isPlateHit ? -0.46 : 0;
-      racer.runner.rotation.z = grabEvent ? -0.35 - liftProgress * 1.2 : isPlateHit ? -0.55 : Math.sin(now / 180 + laneIndex) * 0.04;
+      racer.runner.rotation.z = grabEvent && grabPhase.isContacted ? -0.35 - liftProgress * 1.2 : isPlateHit ? -0.55 : Math.sin(now / 180 + laneIndex) * 0.04;
       racer.runner.visible = visible;
       racer.shadow.position.set(x, 0.02 + RACE_TRACK_SHADOW_Y_OFFSETS[railIndex], z);
       (racer.shadow.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.14 * (1 - liftProgress));
@@ -2054,11 +2069,11 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
 
       const railIndex = laneIndex % 2;
       const laneSlot = Math.floor(laneIndex / 2);
-      const approachProgress = Math.min(1, progress / 0.22);
-      const liftProgress = Math.min(1, Math.max(0, (progress - 0.18) / 0.82));
-      const xPercent = 9 + lane.displayProgress * 84 - liftProgress * 10;
+      const { approachProgress, carryProgress } = getChopstickGrabPhase(progress);
+      const targetX = 9 + lane.displayProgress * 84;
       const targetY = (railIndex === 0 ? 28 : 77) + (laneSlot - 1) * RACE_EVENT_STACK_Y_OFFSET;
-      const yPercent = targetY - (1 - approachProgress) * 27 - liftProgress * 40;
+      const xPercent = targetX + (1 - approachProgress) * 10 - carryProgress * 10;
+      const yPercent = targetY - (1 - approachProgress) * 27 - carryProgress * 40;
 
       return {
         id: event.id,
@@ -2066,7 +2081,7 @@ function ThreeSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
         xPercent,
         yPercent,
         opacity: Math.min(1, approachProgress * 1.4) * (1 - Math.max(0, progress - 0.86) / 0.14),
-        rotation: -18 + liftProgress * 11 + Math.sin(now / 45) * 2,
+        rotation: -18 + carryProgress * 11 + Math.sin(now / 45) * 2,
         scale: 0.82 + approachProgress * 0.18,
       };
     })

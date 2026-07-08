@@ -7,7 +7,7 @@ export const VOTE_LIMIT = 6;
 export const RACE_MIN_DURATION_MS = 45_000;
 export const RACE_MAX_DURATION_MS = 62_000;
 
-export const PLATE_STACK_EVENT_COUNT = 4;
+export const PLATE_STACK_EVENT_COUNT = 5;
 export const PLATE_STACK_IMPACT_PROGRESS = 0.62;
 export const PLATE_STACK_HIT_HOLD_MS = 3_000;
 const PLATE_STACK_SLOW_PENALTY_MS = 1_800;
@@ -126,11 +126,11 @@ export const createRaceEvents = (finalists: string[], seed: number, durationMs: 
     },
   ];
 
-  const plateSlots = [0.28, 0.44, 0.6, 0.76]
+  const plateSlots = [0.24, 0.38, 0.52, 0.66, 0.8]
     .map((slot) => clampTrigger(durationMs * slot + jitter(0.035)))
     .sort((a, b) => a - b);
 
-  const plateStackEventCount = 3 + Math.floor(random() * 2);
+  const plateStackEventCount = 4 + Math.floor(random() * 2);
 
   plateSlots.slice(0, Math.min(PLATE_STACK_EVENT_COUNT, plateStackEventCount)).forEach((triggerAtMs, index) => {
     const railIndex = Math.floor(random() * 2);
