@@ -22,14 +22,14 @@ import {
   selectFinalists,
   VOTE_LIMIT,
 } from "../game/sushiRace";
-import type { MenuVoteEntry, ResultEntry, RoomState } from "../types";
+import type { GameId, MenuVoteEntry, ResultEntry, RoomState } from "../types";
 
 export type Unsubscribe = () => void;
 
 export type RoomStore = {
   uid: string;
   mode: "firebase" | "local";
-  createRoom: (nickname: string) => Promise<string>;
+  createRoom: (nickname: string, gameId: GameId) => Promise<string>;
   joinRoom: (roomCode: string, nickname: string) => Promise<void>;
   watchRoom: (roomCode: string, onRoom: (room: RoomState | null) => void) => Unsubscribe;
   submitVote: (roomCode: string, nickname: string, menuIds: string[]) => Promise<void>;
@@ -99,6 +99,7 @@ const normalizeRoom = (room: RoomState): RoomState => {
 
   return {
     ...room,
+    gameId: room.gameId ?? "sushi",
     menuCards: normalizedMenuCards,
     spinStartAt: room.spinStartAt ?? null,
     spinBoosts: room.spinBoosts ?? {},
@@ -114,11 +115,12 @@ const normalizeRoom = (room: RoomState): RoomState => {
   };
 };
 
-const createInitialRoom = (hostUid: string, nickname: string): RoomState => {
+const createInitialRoom = (hostUid: string, nickname: string, gameId: GameId): RoomState => {
   const now = Date.now();
   const seed = randomSeed();
 
   return {
+    gameId,
     hostUid,
     status: "lobby",
     createdAt: now,
@@ -232,7 +234,7 @@ const createFirebaseStore = async (): Promise<RoomStore> => {
   return {
     uid: user.uid,
     mode: "firebase",
-    createRoom: (nickname) => firebaseCreateRoom(database, user.uid, nickname),
+    createRoom: (nickname, gameId) => firebaseCreateRoom(database, user.uid, nickname, gameId),
     joinRoom: (roomCode, nickname) => firebaseJoinRoom(database, user.uid, roomCode, nickname),
     watchRoom: (roomCode, onRoom) => {
       const roomRef = ref(database, `rooms/${roomCode}`);
@@ -249,7 +251,7 @@ const createFirebaseStore = async (): Promise<RoomStore> => {
   };
 };
 
-const firebaseCreateRoom = async (database: Database, uid: string, nickname: string) => {
+const firebaseCreateRoom = async (database: Database, uid: string, nickname: string, gameId: GameId) => {
   let roomCode = generateRoomCode();
   let roomRef = ref(database, `rooms/${roomCode}`);
   let snapshot = await get(roomRef);
@@ -260,7 +262,7 @@ const firebaseCreateRoom = async (database: Database, uid: string, nickname: str
     snapshot = await get(roomRef);
   }
 
-  await set(roomRef, createInitialRoom(uid, nickname));
+  await set(roomRef, createInitialRoom(uid, nickname, gameId));
   return roomCode;
 };
 
@@ -391,14 +393,14 @@ const createLocalStore = (): RoomStore => {
   return {
     uid,
     mode: "local",
-    createRoom: async (nickname) => {
+    createRoom: async (nickname, gameId) => {
       let roomCode = generateRoomCode();
 
       while (readLocalRoom(roomCode)) {
         roomCode = generateRoomCode();
       }
 
-      writeLocalRoom(roomCode, createInitialRoom(uid, nickname));
+      writeLocalRoom(roomCode, createInitialRoom(uid, nickname, gameId));
       return roomCode;
     },
     joinRoom: async (roomCode, nickname) => {

@@ -1,4 +1,5 @@
 export type RoomStatus = "lobby" | "countdown" | "playing" | "result";
+export type GameId = "sushi" | "top-spin";
 
 export type MenuStats = {
   taste: number;
@@ -99,6 +100,7 @@ export type ResultEntry = {
 };
 
 export type RoomState = {
+  gameId: GameId;
   hostUid: string;
   status: RoomStatus;
   createdAt: number;
