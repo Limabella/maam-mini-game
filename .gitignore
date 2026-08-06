@@ -46,3 +46,10 @@ Builds/
 
 # Unity crash reports
 sysinfo.txt
+
+# Unreal generated files
+**/Binaries/
+**/DerivedDataCache/
+**/Intermediate/
+**/Saved/
+**/__pycache__/
