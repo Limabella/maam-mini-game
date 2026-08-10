@@ -25,39 +25,31 @@ export async function generateMetadata(): Promise<Metadata> {
   const imageUrl = `${protocol}://${host}/og.png`;
 
   return {
-    title: "K-Memorial — Hidden Table",
+    title: "K-Memorial — The Curator's Lie",
     description:
-      "Find Korean memorial foods hidden across real food-culture settings, beginning in Jeonju Hanok Village.",
+      "Study five AI-generated Korean artworks, test the curator's statements, and expose the single forgery.",
     icons: {
       icon: "/favicon.svg",
       shortcut: "/favicon.svg",
     },
     openGraph: {
-      title: "K-Memorial — Hidden Table",
-      description:
-        "Five hidden foods. One Jeonju restaurant. Restore the first row of memory.",
+      title: "K-Memorial — The Curator's Lie",
+      description: "One curator. One lie. One forgery. Can you close the case?",
       images: [{ url: imageUrl, width: 1680, height: 945 }],
     },
     twitter: {
       card: "summary_large_image",
-      title: "K-Memorial — Hidden Table",
-      description:
-        "Five hidden foods. One Jeonju restaurant. Restore the first row of memory.",
+      title: "K-Memorial — The Curator's Lie",
+      description: "One curator. One lie. One forgery.",
       images: [imageUrl],
     },
   };
 }
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
+      <body className={`${geistSans.variable} ${geistMono.variable}`}>
         {children}
       </body>
     </html>

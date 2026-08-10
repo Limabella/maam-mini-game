@@ -1,158 +1,136 @@
 "use client";
 
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-  type MouseEvent,
-} from "react";
+import { useEffect, useMemo, useState } from "react";
 
-const BACKGROUND = "/assets/backgrounds/jeonju-bibimbap-restaurant-empty.png";
-const GAME_SECONDS = 240;
-const LENS_ZOOM = 2.35;
+const CASE_SECONDS = 600;
 
-type GameState = "ready" | "playing" | "won" | "lost";
+type Phase = "briefing" | "investigating" | "solved" | "failed";
 
-type Food = {
+type Seal = { x: number; y: number; rotate: number };
+
+type Artwork = {
   id: string;
-  ko: string;
-  en: string;
-  romanized: string;
+  number: string;
+  title: string;
+  titleKo: string;
   image: string;
-  x: number;
-  y: number;
-  size: number;
-  rotation: number;
-  opacity: number;
-  camouflageFilter: string;
-  blendMode: CSSProperties["mixBlendMode"];
-  zone: string;
-  zoneKo: string;
-  map: { x: number; y: number; width: number; height: number };
-  note: string;
+  season: string;
+  year: string;
+  medium: string;
+  description: string;
+  observation: string;
+  seals: Seal[];
+  forged?: boolean;
 };
 
-const foods: Food[] = [
+const artworks: Artwork[] = [
   {
-    id: "jujube",
-    ko: "대추",
-    en: "Jujube",
-    romanized: "Daechu",
-    image: "/assets/collectibles/jujube.png",
-    x: 20.8,
-    y: 43.4,
-    size: 4.6,
-    rotation: 7,
-    opacity: 0.8,
-    camouflageFilter:
-      "grayscale(0.22) sepia(0.22) saturate(0.58) brightness(0.72) contrast(1.12)",
-    blendMode: "multiply",
-    zone: "Courtyard brick wall",
-    zoneKo: "놋그릇 선반",
-    map: { x: 7, y: 29, width: 27, height: 31 },
-    note: "A red fruit placed toward the east in Hongdong-Baekseo.",
+    id: "spring-dawn",
+    number: "I",
+    title: "Spring Dawn",
+    titleKo: "봄날의 여명",
+    image: "/assets/gallery/01-spring-dawn.png",
+    season: "SPRING",
+    year: "UNKNOWN",
+    medium: "INK & MINERAL PIGMENT ON SILK",
+    description:
+      "A single crane crosses a garden waking beneath pale plum blossoms.",
+    observation: "One bird · no moon · white blossom",
+    seals: [
+      { x: 9, y: 14, rotate: -8 },
+      { x: 84, y: 21, rotate: 7 },
+      { x: 78, y: 84, rotate: -4 },
+    ],
   },
   {
-    id: "chestnut",
-    ko: "밤",
-    en: "Chestnut",
-    romanized: "Bam",
-    image: "/assets/collectibles/chestnut.png",
-    x: 91.2,
-    y: 55.8,
-    size: 4.7,
-    rotation: 2,
-    opacity: 0.84,
-    camouflageFilter:
-      "grayscale(0.52) sepia(0.38) saturate(0.42) brightness(0.68) contrast(1.08)",
-    blendMode: "multiply",
-    zone: "Brass-bowl shelf",
-    zoneKo: "돌솥 찬장",
-    map: { x: 84, y: 43, width: 15, height: 32 },
-    note: "Chestnuts appear in the fruit and dessert row of many family tables.",
+    id: "summer-lotus",
+    number: "II",
+    title: "Summer Lotus",
+    titleKo: "여름 연못",
+    image: "/assets/gallery/02-summer-lotus.png",
+    season: "SUMMER",
+    year: "UNKNOWN",
+    medium: "INK & MINERAL PIGMENT ON SILK",
+    description:
+      "Two kingfishers skim the rain-dark water beside a dense lotus bed.",
+    observation: "Two birds · no moon · no red fruit",
+    seals: [
+      { x: 12, y: 81, rotate: 5 },
+      { x: 87, y: 12, rotate: -6 },
+      { x: 74, y: 88, rotate: 9 },
+    ],
   },
   {
-    id: "pear",
-    ko: "배",
-    en: "Korean Pear",
-    romanized: "Bae",
-    image: "/assets/collectibles/pear.png",
-    x: 17.2,
-    y: 37.6,
-    size: 4.3,
-    rotation: 91,
-    opacity: 0.7,
-    camouflageFilter:
-      "grayscale(0.92) sepia(0.08) saturate(0.16) brightness(0.76) contrast(1.02)",
-    blendMode: "multiply",
-    zone: "Curved roof tiles",
-    zoneKo: "안뜰 돌담",
-    map: { x: 4, y: 24, width: 28, height: 28 },
-    note: "A pale fruit commonly placed toward the west.",
+    id: "autumn-persimmon",
+    number: "III",
+    title: "Autumn Persimmon",
+    titleKo: "가을 감나무",
+    image: "/assets/gallery/03-autumn-persimmon.png",
+    season: "AUTUMN",
+    year: "UNKNOWN",
+    medium: "INK & MINERAL PIGMENT ON SILK",
+    description:
+      "A silent courtyard holds a persimmon tree heavy with red-orange fruit.",
+    observation: "No birds · no moon · red fruit",
+    seals: [
+      { x: 10, y: 11, rotate: -5 },
+      { x: 86, y: 69, rotate: 8 },
+      { x: 20, y: 87, rotate: -10 },
+    ],
   },
   {
-    id: "persimmon",
-    ko: "감",
-    en: "Persimmon",
-    romanized: "Gam",
-    image: "/assets/collectibles/persimmon.png",
-    x: 23.2,
-    y: 48.2,
-    size: 4.4,
-    rotation: -3,
-    opacity: 0.78,
-    camouflageFilter:
-      "grayscale(0.38) sepia(0.34) saturate(0.5) brightness(0.65) contrast(1.06)",
-    blendMode: "multiply",
-    zone: "Onggi jar lids",
-    zoneKo: "배식대",
-    map: { x: 15, y: 38, width: 20, height: 31 },
-    note: "Persimmon is part of the Jo-Yul-Si-Yi ordering tradition.",
+    id: "winter-moon",
+    number: "IV",
+    title: "Winter Moon",
+    titleKo: "겨울 달",
+    image: "/assets/gallery/04-winter-moon.png",
+    season: "WINTER",
+    year: "UNKNOWN",
+    medium: "INK & MINERAL PIGMENT ON SILK",
+    description:
+      "Snow settles on bare plum branches beneath one untroubled full moon.",
+    observation: "No birds · one moon · no fruit",
+    seals: [
+      { x: 11, y: 84, rotate: 8 },
+      { x: 79, y: 15, rotate: -7 },
+      { x: 88, y: 76, rotate: 4 },
+    ],
   },
   {
-    id: "apple",
-    ko: "사과",
-    en: "Apple",
-    romanized: "Sagwa",
-    image: "/assets/collectibles/apple.png",
-    x: 49.7,
-    y: 49.8,
-    size: 4.2,
-    rotation: 5,
-    opacity: 0.8,
-    camouflageFilter:
-      "grayscale(0.68) sepia(0.26) saturate(0.28) brightness(0.58) contrast(1.18)",
-    blendMode: "multiply",
-    zone: "Black stone bowl",
-    zoneKo: "앞쪽 식탁",
-    map: { x: 41, y: 39, width: 21, height: 28 },
-    note: "Its red skin connects it to the eastern side of the table.",
+    id: "crimson-eclipse",
+    number: "V",
+    title: "Crimson Eclipse",
+    titleKo: "붉은 월식",
+    image: "/assets/gallery/05-crimson-eclipse.png",
+    season: "UNRECORDED",
+    year: "UNKNOWN",
+    medium: "INK & MINERAL PIGMENT ON SILK",
+    description:
+      "Three magpies watch a crimson moon burn above fruit-laden branches.",
+    observation: "Three birds · one moon · red fruit",
+    seals: [
+      { x: 8, y: 12, rotate: -7 },
+      { x: 86, y: 10, rotate: 6 },
+      { x: 12, y: 86, rotate: 9 },
+      { x: 85, y: 84, rotate: -5 },
+    ],
+    forged: true,
   },
 ];
 
-type LensState = {
-  visible: boolean;
-  x: number;
-  y: number;
-  left: number;
-  top: number;
-  size: number;
-  sceneWidth: number;
-  sceneHeight: number;
-};
+const testimonies = [
+  "The moon appears only where no red fruit grows.",
+  "No bird enters the Autumn Persimmon courtyard.",
+  "Every authentic work bears exactly three memory seals.",
+  "Winter Moon is the only authentic moonlit work.",
+  "The autumn fruit hangs immediately before Winter Moon.",
+];
 
-const emptyLens: LensState = {
-  visible: false,
-  x: 0,
-  y: 0,
-  left: 0,
-  top: 0,
-  size: 160,
-  sceneWidth: 0,
-  sceneHeight: 0,
-};
+const hints = [
+  "Count the vermilion memory seals. Repetition is the artist's signature.",
+  "Compare every moonlit work with every painting that carries red fruit.",
+  "One painting breaks both the seal pattern and the moon-and-fruit rule.",
+];
 
 function formatTime(value: number) {
   const minutes = Math.floor(value / 60);
@@ -161,485 +139,357 @@ function formatTime(value: number) {
 }
 
 export default function Home() {
-  const [gameState, setGameState] = useState<GameState>("ready");
-  const [found, setFound] = useState<Set<string>>(new Set());
-  const [remainingTime, setRemainingTime] = useState(GAME_SECONDS);
-  const [misses, setMisses] = useState(0);
-  const [hints, setHints] = useState(0);
-  const [hinted, setHinted] = useState<string | null>(null);
-  const [selected, setSelected] = useState(foods[0].id);
-  const [showMap, setShowMap] = useState(false);
-  const [magnifierOn, setMagnifierOn] = useState(true);
-  const [lens, setLens] = useState<LensState>(emptyLens);
+  const [phase, setPhase] = useState<Phase>("briefing");
+  const [remaining, setRemaining] = useState(CASE_SECONDS);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [attempts, setAttempts] = useState(0);
+  const [hintCount, setHintCount] = useState(0);
+  const [markedStatements, setMarkedStatements] = useState<Set<number>>(new Set());
   const [toast, setToast] = useState<string | null>(null);
-  const [missMark, setMissMark] = useState<{ x: number; y: number; key: number } | null>(
-    null,
-  );
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const remainingFoods = useMemo(
-    () => foods.filter((food) => !found.has(food.id)),
-    [found],
-  );
-  const selectedFood =
-    foods.find((food) => food.id === selected && !found.has(food.id)) ??
-    remainingFoods[0] ??
-    foods[0];
-  const elapsed = GAME_SECONDS - remainingTime;
-  const score = Math.max(0, 1000 - hints * 80 - misses * 25 - elapsed * 2);
+  const selected = artworks.find((artwork) => artwork.id === selectedId) ?? null;
+  const opened = artworks.find((artwork) => artwork.id === openId) ?? null;
+  const elapsed = CASE_SECONDS - remaining;
+  const score = Math.max(100, 1200 - elapsed - attempts * 160 - hintCount * 120);
 
   useEffect(() => {
-    if (gameState !== "playing") return;
+    if (phase !== "investigating") return;
     const timer = window.setInterval(() => {
-      setRemainingTime((current) => {
+      setRemaining((current) => {
         if (current <= 1) {
           window.clearInterval(timer);
-          setGameState("lost");
+          setPhase("failed");
           return 0;
         }
         return current - 1;
       });
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [gameState]);
+  }, [phase]);
 
   useEffect(() => {
-    return () => {
-      if (toastTimer.current) clearTimeout(toastTimer.current);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpenId(null);
     };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
+
+  const activeHints = useMemo(() => hints.slice(0, hintCount), [hintCount]);
 
   const announce = (message: string) => {
     setToast(message);
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), 1700);
+    window.setTimeout(() => setToast(null), 2200);
   };
 
-  const startGame = () => {
-    setFound(new Set());
-    setRemainingTime(GAME_SECONDS);
-    setMisses(0);
-    setHints(0);
-    setHinted(null);
-    setSelected(foods[0].id);
-    setGameState("playing");
-    announce("The restaurant is open to memory. Find all five foods.");
+  const beginCase = () => {
+    setPhase("investigating");
+    setRemaining(CASE_SECONDS);
+    setSelectedId(null);
+    setAttempts(0);
+    setHintCount(0);
+    setMarkedStatements(new Set());
+    announce("Case file opened. Five works, one forgery.");
   };
 
-  const findFood = (food: Food, event: MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation();
-    if (gameState !== "playing" || found.has(food.id)) return;
-    const next = new Set(found);
-    next.add(food.id);
-    setFound(next);
-    setHinted(null);
-    announce(`${food.en} found · ${food.ko}`);
+  const inspect = (id: string) => {
+    setSelectedId(id);
+    setOpenId(id);
+    setZoom(1);
+  };
 
-    const nextFood = foods.find((candidate) => !next.has(candidate.id));
-    if (nextFood) setSelected(nextFood.id);
-    if (next.size === foods.length) {
-      setTimeout(() => setGameState("won"), 500);
+  const accuse = () => {
+    if (phase !== "investigating" || !selected) return;
+    if (selected.forged) {
+      setPhase("solved");
+      return;
     }
-  };
 
-  const markMiss = (event: MouseEvent<HTMLDivElement>) => {
-    if (gameState !== "playing") return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = ((event.clientX - rect.left) / rect.width) * 100;
-    const y = ((event.clientY - rect.top) / rect.height) * 100;
-    setMisses((count) => count + 1);
-    setMissMark({ x, y, key: Date.now() });
-    window.setTimeout(() => setMissMark(null), 650);
+    const nextAttempts = attempts + 1;
+    setAttempts(nextAttempts);
+    announce(`${selected.title} is internally consistent. Reopen the evidence.`);
+    if (nextAttempts >= 3) setPhase("failed");
   };
 
   const useHint = () => {
-    if (gameState !== "playing" || hints >= 3 || remainingFoods.length === 0) return;
-    const food = selectedFood ?? remainingFoods[0];
-    setHints((count) => count + 1);
-    setHinted(food.id);
-    announce(`A memory flickers near the ${food.zone.toLowerCase()}.`);
-    window.setTimeout(() => setHinted(null), 2400);
+    if (phase !== "investigating" || hintCount >= hints.length) return;
+    setHintCount((current) => current + 1);
   };
 
-  const moveLens = (event: MouseEvent<HTMLDivElement>) => {
-    if (!magnifierOn || gameState !== "playing") return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
-    const y = Math.max(0, Math.min(rect.height, event.clientY - rect.top));
-    const size = Math.max(112, Math.min(180, rect.width * 0.18));
-    setLens({
-      visible: true,
-      x,
-      y,
-      left: Math.max(0, Math.min(rect.width - size, x + 18)),
-      top: Math.max(0, Math.min(rect.height - size, y + 18)),
-      size,
-      sceneWidth: rect.width,
-      sceneHeight: rect.height,
+  const toggleStatement = (index: number) => {
+    setMarkedStatements((current) => {
+      const next = new Set(current);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
     });
   };
 
-  const resetLens = () => setLens((current) => ({ ...current, visible: false }));
-
   return (
-    <main>
-      <header className="topbar">
-        <a className="brand" href="#game" aria-label="K-Memorial home">
-          <span className="brand-mark">KM</span>
+    <main className="museum-shell">
+      <header className="museum-header">
+        <a className="museum-brand" href="#case" aria-label="K-Memorial home">
+          <span className="brand-monogram">KM</span>
           <span>
-            <strong>K-Memorial</strong>
-            <small>Hidden Table</small>
+            <strong>K-MEMORIAL</strong>
+            <small>THE CURATOR'S LIE</small>
           </span>
         </a>
-        <div className="stage-rail" aria-label="Basic game progress">
-          <span className="rail-label">BASIC COLLECTION</span>
-          <span className="rail-line">
-            <i />
-          </span>
-          <strong>01 / 30</strong>
+        <div className="case-status">
+          <span>CASE 001</span>
+          <i />
+          <strong>THE FIFTH SEAL</strong>
         </div>
-        <span className="status-chip">JEONJU · 전주</span>
+        <div className="ai-mark">
+          <span className="ai-dot" />
+          AI ART · LOGIC VERIFIED
+        </div>
       </header>
 
-      <section className="intro">
+      <section className="case-intro" id="case">
         <div>
-          <p className="eyebrow">A KOREAN FOOD-CULTURE PUZZLE</p>
-          <h1>Find what memory<br />left behind.</h1>
+          <p className="kicker">PRIVATE VIEWING · 비공개 감정</p>
+          <h1>The Curator’s<br /><em>Lie</em></h1>
         </div>
-        <div className="intro-copy">
+        <div className="intro-brief">
+          <span className="brief-index">01</span>
           <p>
-            Five foods are folded into an empty bibimbap restaurant in Jeonju
-            Hanok Village. Look closely, collect them, then restore the first row
-            of a <em>jesa</em> table.
+            Five paintings entered the archive. Four share one visual grammar.
+            One was generated to imitate it. Study the seasons, birds, fruit,
+            moonlight, and vermilion seals—then accuse the forgery.
           </p>
-          <span>찾고 · 배우고 · 상을 완성하세요</span>
+          <small>다섯 작품 중 단 하나의 위작을 찾아내세요.</small>
         </div>
       </section>
 
-      <section className="game-layout" id="game">
-        <div className="scene-column">
-          <div className="scene-meta">
-            <div>
-              <span>STAGE 01</span>
-              <strong>Jeonju Bibimbap House</strong>
-            </div>
-            <div className="game-stats">
-              <span>TIME <strong>{formatTime(remainingTime)}</strong></span>
-              <span>FOUND <strong>{found.size}/{foods.length}</strong></span>
-              <span>MISSES <strong>{misses}</strong></span>
-            </div>
+      <section className="game-board" aria-label="The Curator's Lie game">
+        <div className="board-topline">
+          <div>
+            <span>WEST GALLERY · ROOM 04</span>
+            <strong>Five Seasons, One Intruder</strong>
           </div>
+          <div className="case-metrics">
+            <span>TIME <strong>{formatTime(remaining)}</strong></span>
+            <span>ERRORS <strong>{attempts}/3</strong></span>
+            <span>HINTS <strong>{hintCount}/3</strong></span>
+          </div>
+        </div>
 
-          <div
-            className={`scene ${magnifierOn ? "is-magnifying" : ""}`}
-            onClick={markMiss}
-            onMouseMove={moveLens}
-            onMouseLeave={resetLens}
-            aria-label="Jeonju Hanok Village bibimbap restaurant hidden-object scene"
-          >
-            <img
-              className="scene-background"
-              src={BACKGROUND}
-              alt="An empty bibimbap restaurant in Jeonju Hanok Village"
-              draggable={false}
-            />
-
-            {foods.map((food) =>
-              found.has(food.id) ? null : (
+        <div className="gallery-wall">
+          {artworks.map((artwork) => {
+            const isSelected = selectedId === artwork.id;
+            return (
+              <article className={`art-card ${isSelected ? "is-selected" : ""}`} key={artwork.id}>
                 <button
-                  key={food.id}
-                  className={`hidden-item ${hinted === food.id ? "is-hinted" : ""}`}
-                  style={
-                    {
-                      "--item-x": `${food.x}%`,
-                      "--item-y": `${food.y}%`,
-                      "--item-size": `${food.size}%`,
-                      "--item-rotation": `${food.rotation}deg`,
-                      "--item-opacity": food.opacity,
-                      "--item-filter": food.camouflageFilter,
-                      "--item-blend": food.blendMode,
-                    } as CSSProperties
-                  }
-                  onClick={(event) => findFood(food, event)}
-                  aria-label={`Hidden ${food.en}`}
+                  className="art-frame"
+                  onClick={() => inspect(artwork.id)}
+                  aria-label={`Inspect ${artwork.title}`}
                 >
-                  <img
-                    className="food-camouflage"
-                    src={food.image}
-                    alt=""
-                    draggable={false}
-                  />
+                  <span className="frame-number">{artwork.number}</span>
+                  <span className="art-crop">
+                    <img src={artwork.image} alt={artwork.description} draggable={false} />
+                    {artwork.seals.map((seal, index) => (
+                      <span
+                        className="memory-seal"
+                        key={index}
+                        style={{ left: `${seal.x}%`, top: `${seal.y}%`, rotate: `${seal.rotate}deg` }}
+                        aria-hidden="true"
+                      >
+                        記
+                      </span>
+                    ))}
+                    <span className="inspect-label">INSPECT +</span>
+                  </span>
                 </button>
-              ),
-            )}
-
-            {missMark && (
-              <span
-                key={missMark.key}
-                className="miss-mark"
-                style={{ left: `${missMark.x}%`, top: `${missMark.y}%` }}
-              />
-            )}
-
-            {lens.visible && (
-              <div
-                className="magnifier-lens"
-                style={{
-                  left: lens.left,
-                  top: lens.top,
-                  width: lens.size,
-                  height: lens.size,
-                  backgroundImage: `url(${BACKGROUND})`,
-                  backgroundSize: `${lens.sceneWidth * LENS_ZOOM}px ${
-                    lens.sceneHeight * LENS_ZOOM
-                  }px`,
-                  backgroundPosition: `${
-                    -(lens.x * LENS_ZOOM - lens.size / 2)
-                  }px ${-(lens.y * LENS_ZOOM - lens.size / 2)}px`,
-                }}
-                aria-hidden="true"
-              >
-                {foods.map((food) =>
-                  found.has(food.id) ? null : (
-                    <img
-                      key={food.id}
-                      className="lens-item"
-                      src={food.image}
-                      alt=""
-                      style={{
-                        left:
-                          (food.x / 100) * lens.sceneWidth * LENS_ZOOM -
-                          lens.x * LENS_ZOOM +
-                          lens.size / 2,
-                        top:
-                          (food.y / 100) * lens.sceneHeight * LENS_ZOOM -
-                          lens.y * LENS_ZOOM +
-                          lens.size / 2,
-                        width:
-                          (food.size / 100) * lens.sceneWidth * LENS_ZOOM,
-                        opacity: 0.9,
-                        transform: `rotate(${food.rotation}deg)`,
-                      }}
-                    />
-                  ),
-                )}
-                <span className="lens-crosshair" />
-              </div>
-            )}
-
-            {gameState === "ready" && (
-              <div className="scene-gate">
-                <p>JEONJU · BASIC 01</p>
-                <h2>The first memory<br />begins at an empty table.</h2>
-                <button className="primary-button" onClick={startGame}>
-                  Enter the restaurant
-                </button>
-                <span>4 minutes · 5 foods · 3 hints</span>
-              </div>
-            )}
-
-            {gameState === "lost" && (
-              <div className="scene-gate">
-                <p>THE DOORS ARE CLOSING</p>
-                <h2>{foods.length - found.size} memories remain.</h2>
-                <button className="primary-button" onClick={startGame}>
-                  Try again
-                </button>
-              </div>
-            )}
-
-            {gameState === "won" && (
-              <div className="scene-gate result-gate">
-                <p>ROW ONE RESTORED</p>
-                <h2>Hongdong-Baekseo</h2>
-                <div className="result-score">
-                  <span>SCORE</span>
-                  <strong>{score.toString().padStart(4, "0")}</strong>
+                <div className="art-label">
+                  <span>{artwork.season}</span>
+                  <h2>{artwork.title}</h2>
+                  <p>{artwork.titleKo}</p>
+                  <button
+                    className={isSelected ? "suspect-button is-selected" : "suspect-button"}
+                    onClick={() => setSelectedId(artwork.id)}
+                    disabled={phase !== "investigating"}
+                  >
+                    {isSelected ? "SELECTED SUSPECT" : "MARK AS SUSPECT"}
+                  </button>
                 </div>
-                <p className="result-copy">
-                  Red foods east, white foods west. Families and regions may
-                  arrange their tables differently—the act of remembering comes
-                  first.
-                </p>
-                <button className="primary-button" onClick={startGame}>
-                  Play again
-                </button>
+              </article>
+            );
+          })}
+        </div>
+
+        <div className="evidence-deck">
+          <section className="testimony-panel">
+            <div className="panel-heading">
+              <div>
+                <span>CURATOR'S TESTIMONY</span>
+                <h2>Exactly one statement is false.</h2>
+              </div>
+              <span className="statement-count">05 STATEMENTS</span>
+            </div>
+            <ol className="statement-list">
+              {testimonies.map((statement, index) => (
+                <li key={statement} className={markedStatements.has(index) ? "is-marked" : ""}>
+                  <button onClick={() => toggleStatement(index)} aria-pressed={markedStatements.has(index)}>
+                    <span>{String(index + 1).padStart(2, "0")}</span>
+                    <p>{statement}</p>
+                    <i>{markedStatements.has(index) ? "SUSPECT" : "MARK"}</i>
+                  </button>
+                </li>
+              ))}
+            </ol>
+          </section>
+
+          <aside className="deduction-panel">
+            <div>
+              <span className="panel-eyebrow">DEDUCTION DESK · 추리 기록</span>
+              <h2>{selected ? selected.title : "Choose a suspect"}</h2>
+              <p>
+                {selected
+                  ? selected.description
+                  : "Inspect the paintings, mark the curator’s false statement, and select the work that cannot belong."}
+              </p>
+            </div>
+
+            {activeHints.length > 0 && (
+              <div className="hint-stack">
+                {activeHints.map((hint, index) => (
+                  <p key={hint}><span>TRACE {index + 1}</span>{hint}</p>
+                ))}
               </div>
             )}
 
-            {toast && <div className="toast" role="status">{toast}</div>}
-          </div>
-
-          <div className="culture-strip">
-            <span className="rule-index">01</span>
-            <div>
-              <small>TABLE RULE · 상차림 규칙</small>
-              <strong>Hongdong-Baekseo · 홍동백서</strong>
-            </div>
-            <p>Red foods to the east, white foods to the west.</p>
-          </div>
-        </div>
-
-        <aside className="side-panel">
-          <div className="side-heading">
-            <span>TARGETS</span>
-            <strong>{remainingFoods.length} REMAINING</strong>
-          </div>
-
-          <div className="target-list">
-            {foods.map((food) => {
-              const isFound = found.has(food.id);
-              return (
-                <button
-                  key={food.id}
-                  className={`target-card ${isFound ? "is-found" : ""} ${
-                    selected === food.id ? "is-selected" : ""
-                  }`}
-                  onClick={() => {
-                    if (!isFound) {
-                      setSelected(food.id);
-                      setShowMap(true);
-                    }
-                  }}
-                  disabled={isFound}
-                >
-                  <span className="target-thumb">
-                    <img src={food.image} alt="" />
-                  </span>
-                  <span>
-                    <strong>{food.en}</strong>
-                    <small>{food.romanized} · {food.ko}</small>
-                  </span>
-                  <i>{isFound ? "FOUND" : "○"}</i>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="tool-grid">
-            <button
-              className={magnifierOn ? "is-active" : ""}
-              onClick={() => setMagnifierOn((value) => !value)}
-              aria-pressed={magnifierOn}
-            >
-              <span className="tool-icon">⌕</span>
-              <strong>Magnifier</strong>
-              <small>{magnifierOn ? "ON" : "OFF"}</small>
-            </button>
-            <button onClick={() => setShowMap(true)}>
-              <span className="tool-icon">⌗</span>
-              <strong>Memory Map</strong>
-              <small>OPEN</small>
-            </button>
-          </div>
-
-          <button
-            className="hint-button"
-            onClick={useHint}
-            disabled={gameState !== "playing" || hints >= 3}
-          >
-            <span>Use a memory trace</span>
-            <strong>{3 - hints} LEFT</strong>
-          </button>
-
-          <p className="source-note">
-            English cultural terminology references{" "}
-            <a
-              href="https://thesoulofseoul.net/how-to-set-the-table-for-jesa/"
-              target="_blank"
-              rel="noreferrer"
-            >
-              The Soul of Seoul
-            </a>
-            .
-          </p>
-        </aside>
-      </section>
-
-      <section className="roadmap">
-        <div>
-          <p className="eyebrow">WHAT COMES AFTER BASIC 30</p>
-          <h2>Made by memory.<br />Hidden by players.</h2>
-        </div>
-        <div className="roadmap-copy">
-          <p>
-            Maker players will generate restaurant scenes, remove color or keep
-            only outlines, tune opacity and texture, then publish their own
-            cultural hidden-object stages.
-          </p>
-          <div className="roadmap-steps">
-            <span><b>01</b> Generate a place</span>
-            <span><b>02</b> Customize a food</span>
-            <span><b>03</b> Hide & publish</span>
-          </div>
-        </div>
-      </section>
-
-      <footer>
-        <span>K-MEMORIAL · BASIC COLLECTION 01</span>
-        <span>JEONJU HANOK VILLAGE · 전주한옥마을</span>
-      </footer>
-
-      {showMap && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowMap(false)}>
-          <div
-            className="map-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="map-title"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <div className="modal-header">
-              <div>
-                <span>APPROXIMATE CLUE</span>
-                <h2 id="map-title">Memory Map</h2>
-              </div>
-              <button onClick={() => setShowMap(false)} aria-label="Close memory map">
-                ×
+            <div className="desk-actions">
+              <button className="hint-action" onClick={useHint} disabled={phase !== "investigating" || hintCount >= 3}>
+                REQUEST TRACE <span>{3 - hintCount} LEFT</span>
+              </button>
+              <button className="accuse-action" onClick={accuse} disabled={phase !== "investigating" || !selected}>
+                ACCUSE THIS WORK
               </button>
             </div>
+          </aside>
+        </div>
 
-            <div className="map-content">
-              <div className="mini-scene" style={{ backgroundImage: `url(${BACKGROUND})` }}>
-                <span
-                  className="map-zone"
-                  style={{
-                    left: `${selectedFood.map.x}%`,
-                    top: `${selectedFood.map.y}%`,
-                    width: `${selectedFood.map.width}%`,
-                    height: `${selectedFood.map.height}%`,
-                  }}
-                />
-                <span className="mini-caption">AREA, NOT EXACT POSITION</span>
-              </div>
-              <div className="map-detail">
-                <span>YOU ARE LOOKING FOR</span>
-                <img src={selectedFood.image} alt={selectedFood.en} />
-                <h3>{selectedFood.en}</h3>
-                <p>{selectedFood.romanized} · {selectedFood.ko}</p>
-                <div className="zone-name">
-                  <small>SEARCH NEAR</small>
-                  <strong>{selectedFood.zone}</strong>
-                  <span>{selectedFood.zoneKo}</span>
-                </div>
-                <p className="food-note">{selectedFood.note}</p>
-              </div>
-            </div>
-
-            <div className="modal-targets">
-              {remainingFoods.map((food) => (
-                <button
-                  key={food.id}
-                  className={selectedFood.id === food.id ? "is-selected" : ""}
-                  onClick={() => setSelected(food.id)}
-                >
-                  {food.en}
-                </button>
-              ))}
-            </div>
+        {phase === "briefing" && (
+          <div className="case-overlay">
+            <p>CASE FILE 001</p>
+            <h2>One curator.<br />One lie.<br />One forgery.</h2>
+            <button onClick={beginCase}>ENTER THE GALLERY</button>
+            <span>10 MINUTES · 5 WORKS · 3 TRACES</span>
           </div>
+        )}
+
+        {(phase === "solved" || phase === "failed") && (
+          <div className={`case-overlay result-overlay ${phase}`}>
+            <p>{phase === "solved" ? "CASE SOLVED" : "ARCHIVE LOCKED"}</p>
+            <h2>{phase === "solved" ? "Crimson Eclipse is the forgery." : "The curator kept the secret."}</h2>
+            <div className="result-summary">
+              <div><span>SCORE</span><strong>{phase === "solved" ? score : "0000"}</strong></div>
+              <p>
+                The fifth work alone carries four memory seals. It also joins a moon with red fruit,
+                making the curator’s first statement the only lie. The remaining four works keep the
+                three-seal grammar intact.
+              </p>
+            </div>
+            <button onClick={beginCase}>REOPEN THE CASE</button>
+          </div>
+        )}
+      </section>
+
+      <section className="method-strip">
+        <span>AI GENERATED ART</span>
+        <i />
+        <span>DETERMINISTIC LOGIC</span>
+        <i />
+        <span>ONE VERIFIED ANSWER</span>
+      </section>
+
+      <section className="case-notes">
+        <div>
+          <p className="kicker">HOW THE ARCHIVE WORKS</p>
+          <h2>AI paints the mystery.<br />Logic keeps it honest.</h2>
+        </div>
+        <div className="notes-grid">
+          <p><span>01</span>Every artwork is generated from a structured visual brief.</p>
+          <p><span>02</span>Evidence such as seal counts is rendered by the game, not guessed by AI.</p>
+          <p><span>03</span>The rule set is checked so only one accusation can close the case.</p>
+        </div>
+      </section>
+
+      <footer className="museum-footer">
+        <span>K-MEMORIAL · THE CURATOR'S LIE</span>
+        <span>CASE 001 · THE FIFTH SEAL</span>
+      </footer>
+
+      {opened && (
+        <div className="inspection-backdrop" role="presentation" onMouseDown={() => setOpenId(null)}>
+          <section
+            className="inspection-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="inspection-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="inspection-head">
+              <div>
+                <span>CONSERVATION VIEW · {opened.number}</span>
+                <h2 id="inspection-title">{opened.title}</h2>
+              </div>
+              <button onClick={() => setOpenId(null)} aria-label="Close inspection">×</button>
+            </div>
+            <div className="inspection-body">
+              <div className="zoom-viewport">
+                <div className="zoom-canvas" style={{ transform: `scale(${zoom})` }}>
+                  <img src={opened.image} alt={opened.description} />
+                  {opened.seals.map((seal, index) => (
+                    <span
+                      className="memory-seal large"
+                      key={index}
+                      style={{ left: `${seal.x}%`, top: `${seal.y}%`, rotate: `${seal.rotate}deg` }}
+                    >
+                      記
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <aside className="inspection-notes">
+                <span>{opened.season} · {opened.year}</span>
+                <h3>{opened.titleKo}</h3>
+                <p>{opened.description}</p>
+                <dl>
+                  <div><dt>MEDIUM</dt><dd>{opened.medium}</dd></div>
+                  <div><dt>VISIBLE TRACE</dt><dd>{opened.observation}</dd></div>
+                  <div><dt>MEMORY SEALS</dt><dd>Count them in the image.</dd></div>
+                </dl>
+                <label htmlFor="zoom-range">MAGNIFICATION <strong>{Math.round(zoom * 100)}%</strong></label>
+                <input
+                  id="zoom-range"
+                  type="range"
+                  min="1"
+                  max="2.4"
+                  step="0.1"
+                  value={zoom}
+                  onChange={(event) => setZoom(Number(event.target.value))}
+                />
+                <button
+                  className="modal-suspect"
+                  onClick={() => {
+                    setSelectedId(opened.id);
+                    setOpenId(null);
+                  }}
+                  disabled={phase !== "investigating"}
+                >
+                  MARK {opened.number} AS SUSPECT
+                </button>
+              </aside>
+            </div>
+          </section>
         </div>
       )}
+
+      {toast && <div className="museum-toast" role="status">{toast}</div>}
     </main>
   );
 }

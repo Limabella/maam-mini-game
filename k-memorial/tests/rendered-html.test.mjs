@@ -8,69 +8,46 @@ async function render() {
   const { default: worker } = await import(workerUrl.href);
 
   return worker.fetch(
-    new Request("http://localhost/", {
-      headers: { accept: "text/html" },
-    }),
-    {
-      ASSETS: {
-        fetch: async () => new Response("Not found", { status: 404 }),
-      },
-    },
-    {
-      waitUntil() {},
-      passThroughOnException() {},
-    },
+    new Request("http://localhost/", { headers: { accept: "text/html" } }),
+    { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
+    { waitUntil() {}, passThroughOnException() {} },
   );
 }
 
-test("server-renders the Jeonju hidden-object game", async () => {
+test("server-renders The Curator's Lie case", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>K-Memorial — Hidden Table<\/title>/i);
-  assert.match(html, /Jeonju Bibimbap House/);
-  assert.match(html, /Hongdong-Baekseo/);
-  assert.match(html, /BASIC COLLECTION/);
-  assert.match(
-    html,
-    /\/assets\/backgrounds\/jeonju-bibimbap-restaurant-empty\.png/,
-  );
+  assert.match(html, /<title>K-Memorial — The Curator(?:'|&#x27;)s Lie<\/title>/i);
+  assert.match(html, /THE CURATOR(?:'|&#x27;)S LIE/);
+  assert.match(html, /Five Seasons, One Intruder/);
+  assert.match(html, /Exactly one statement is false/);
+  assert.match(html, /ENTER THE GALLERY/);
 
-  const hiddenLabels = html.match(/aria-label="Hidden [^"]+"/g) ?? [];
-  assert.equal(hiddenLabels.length, 5);
-  assert.match(html, /Hidden Jujube/);
-  assert.match(html, /Hidden Chestnut/);
-  assert.match(html, /Hidden Korean Pear/);
-  assert.match(html, /Hidden Persimmon/);
-  assert.match(html, /Hidden Apple/);
+  const inspectionLabels = html.match(/aria-label="Inspect [^"]+"/g) ?? [];
+  assert.equal(inspectionLabels.length, 5);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });
 
-test("ships the required game assets and maker roadmap", async () => {
-  const [page, plan, packageJson] = await Promise.all([
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../docs/product-plan-ko.md", import.meta.url), "utf8"),
-    readFile(new URL("../package.json", import.meta.url), "utf8"),
-  ]);
+test("ships five gallery works and deterministic evidence", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
 
-  assert.match(page, /Memory Map/);
-  assert.match(page, /magnifier-lens/);
-  assert.match(page, /LENS_ZOOM/);
-  assert.match(page, /Maker players/);
-  assert.match(plan, /30개 모두 가로형 16:9, 동일한 시점과 품질/);
-  assert.match(plan, /원본 배경과 음식 오브젝트를 완전히 별도 레이어로 관리/);
-  assert.doesNotMatch(packageJson, /react-loading-skeleton/);
+  assert.match(page, /Crimson Eclipse/);
+  assert.match(page, /forged: true/);
+  assert.match(page, /Every authentic work bears exactly three memory seals/);
+  assert.match(page, /artwork\.seals\.map/);
+  assert.match(page, /type="range"/);
+  assert.match(page, /ACCUSE THIS WORK/);
 
   const assets = [
-    "../public/assets/backgrounds/jeonju-bibimbap-restaurant-empty.png",
-    "../public/assets/collectibles/jujube.png",
-    "../public/assets/collectibles/chestnut.png",
-    "../public/assets/collectibles/pear.png",
-    "../public/assets/collectibles/persimmon.png",
-    "../public/assets/collectibles/apple.png",
-    "../public/og.png",
-  ];
-  await Promise.all(assets.map((asset) => access(new URL(asset, import.meta.url))));
+    "01-spring-dawn.png",
+    "02-summer-lotus.png",
+    "03-autumn-persimmon.png",
+    "04-winter-moon.png",
+    "05-crimson-eclipse.png",
+  ].map((name) => new URL(`../public/assets/gallery/${name}`, import.meta.url));
+
+  await Promise.all([...assets, new URL("../public/og.png", import.meta.url)].map(access));
 });
