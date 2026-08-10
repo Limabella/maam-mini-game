@@ -4,46 +4,37 @@
 
 > Private demo: https://k-memorial-hidden-table.ant-probe.chatgpt.site
 
-K-Memorial is an AI-assisted visual logic game set inside a fictional museum.
-Five Korean-inspired artworks enter the archive, but one is a forgery. Players
-compare seasons, birds, fruit, moonlight, recurring seals, and the curator's
-testimony to identify the only work that cannot belong.
+K-Memorial is an AI-assisted visual logic game built around representative Korean restaurant interiors. Five regional dining rooms enter the archive, but one is an AI composite that has borrowed another region's visual signature. Players compare architecture, materials, tableware, recurring seals, and the curator's testimony to identify the room that cannot belong.
 
 ![The Curator's Lie social preview](public/og.png)
 
-## Case 001 — The Fifth Seal
+## Case 001 — The Borrowed Room
 
-- Five AI-generated artworks
-- One verified forgery
-- Five curator statements, exactly one false
-- Ten-minute investigation
-- Three progressive hints
-- Three accusation attempts
-- Artwork inspection with adjustable magnification
+- Five AI-generated restaurant scenes: Jeonju, Busan, Jeju, Andong, and Chuncheon
+- One logically verified composite
+- Five curator statements with exactly one false claim
+- Ten-minute investigation, three progressive hints, and three accusation attempts
+- Full-screen inspection with adjustable magnification
 
 ## How to Play
 
-1. Select **Enter the Gallery** to open the case.
-2. Inspect all five paintings and zoom in on their visual evidence.
-3. Count the vermilion memory seals and compare birds, moonlight, and fruit.
-4. Mark any curator statements that appear suspicious.
-5. Select one painting as the suspect and choose **Accuse This Work**.
+1. Select **Enter the Archive** to open the case.
+2. Inspect all five restaurant scenes and zoom in on regional evidence.
+3. Compare wall materials, architecture, cookware, tableware, and memory seals.
+4. Mark any curator statement that appears suspicious.
+5. Choose one room and select **Accuse This Room**.
 6. Close the case before time or accusation attempts run out.
 
 ## Design Principle
 
-AI creates the artwork and atmosphere, while deterministic game data controls
-the evidence and answer. The logic does not depend on an AI model judging the
-player's response, so every case can be validated to have one solution.
+AI creates each restaurant atmosphere from a structured regional brief. Deterministic game data controls the clues, seal counts, statements, and answer, ensuring the case has one verifiable solution without asking an AI model to judge the player.
 
 ## Tech Stack
 
-- Next.js 16
-- React 19
-- TypeScript 5
+- Next.js 16, React 19, and TypeScript 5
 - vinext and Vite 8
-- CSS responsive gallery, overlays, and zoom interaction
-- OpenAI-generated raster artwork
+- Responsive CSS gallery, overlays, and zoom interaction
+- OpenAI-generated raster restaurant scenes
 - OpenAI Sites private hosting
 - Node.js 22 or later
 
@@ -70,7 +61,7 @@ k-memorial/
     globals.css
     layout.tsx
   public/
-    assets/gallery/
+    assets/restaurants/
     og.png
   tests/
     rendered-html.test.mjs
@@ -78,8 +69,8 @@ k-memorial/
 
 ## Planned Work
 
-- Add cases with conditional, ordering, parity, and self-referential logic
-- Generate new museum collections from structured case data
+- Expand the archive to 30 representative Korean restaurant settings
+- Add cases using ordering, parity, conditional, and self-referential logic
+- Validate future cases with a constraint solver before publication
 - Add a visual deduction notebook and case history
-- Validate future cases with a constraint solver before publishing
-- Add community-authored exhibitions with AI-assisted art direction
+- Support community-authored cases with AI-assisted art direction
