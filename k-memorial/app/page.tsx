@@ -12,7 +12,7 @@ type Restaurant = {
 };
 
 const restaurants: Restaurant[] = [
-  { id: "jeonju-bibimbap", number: "I", title: "Jeonju Bibimbap House", titleKo: "전주 비빔밥집", image: "/assets/restaurants/01-jeonju-bibimbap.png", region: "JEONJU", specialty: "BIBIMBAP", material: "HANOK TIMBER · BRASSWARE", description: "An elegant hanok dining room opens onto a quiet courtyard, with brass bowls and a mother-of-pearl cabinet.", observation: "Brass bowls · hanok courtyard · no blue tile", seals: [{ x: 9, y: 14, rotate: -8 }, { x: 84, y: 21, rotate: 7 }, { x: 78, y: 84, rotate: -4 }] },
+  { id: "family-jesa-sang", number: "I", title: "A Family's Jesa-Sang", titleKo: "한 가정의 제사상", image: "/assets/restaurants/01-family-jesa-sang.png", region: "HOUSEHOLD", specialty: "MEMORIAL TABLE", material: "LACQUERED WOOD · BRASSWARE", description: "A quiet family memorial table is arranged before a folding screen, with fruit, jeon, fish, candles, and incense prepared for the rite.", observation: "Incense burner closest to viewer · red apples at front-right · jujubes at front-left", seals: [{ x: 9, y: 14, rotate: -8 }, { x: 84, y: 21, rotate: 7 }, { x: 78, y: 84, rotate: -4 }] },
   { id: "busan-gukbap", number: "II", title: "Busan Gukbap Diner", titleKo: "부산 돼지국밥집", image: "/assets/restaurants/02-busan-gukbap.png", region: "BUSAN", specialty: "DWAEJI-GUKBAP", material: "COBALT TILE · STAINLESS STEEL", description: "A harbor-side diner pairs cobalt wall tile with stainless tables and a steaming stock pot.", observation: "Cobalt-blue tile · stock pot · harbor view", seals: [{ x: 12, y: 81, rotate: 5 }, { x: 87, y: 12, rotate: -6 }, { x: 74, y: 88, rotate: 9 }] },
   { id: "jeju-black-pork", number: "III", title: "Jeju Black Pork Grill", titleKo: "제주 흑돼지집", image: "/assets/restaurants/03-jeju-black-pork.png", region: "JEJU", specialty: "BLACK PORK", material: "VOLCANIC BASALT · COPPER", description: "Volcanic basalt walls, copper exhaust hoods, iron grills, and a tangerine crate define the island room.", observation: "Basalt · copper hood · tangerines", seals: [{ x: 10, y: 11, rotate: -5 }, { x: 86, y: 69, rotate: 8 }, { x: 20, y: 87, rotate: -10 }] },
   { id: "andong-jjimdak", number: "IV", title: "Andong Jjimdak House", titleKo: "안동 찜닭집", image: "/assets/restaurants/04-andong-jjimdak.png", region: "ANDONG", specialty: "JJIMDAK", material: "HANOK BEAMS · EARTHENWARE", description: "Paper lamps warm the timber room, where earthenware and a Hahoe mask recall Andong's cultural landscape.", observation: "Hahoe mask · earthenware · hanok beams", seals: [{ x: 11, y: 84, rotate: 8 }, { x: 79, y: 15, rotate: -7 }, { x: 88, y: 76, rotate: 4 }] },
@@ -20,18 +20,20 @@ const restaurants: Restaurant[] = [
 ];
 
 const testimonies = [
-  "Cobalt-blue wall tile appears only in the Busan diner.",
-  "Volcanic basalt belongs only to the Jeju grill.",
-  "Every authentic room bears exactly three memory seals.",
-  "Jeonju is the only room where brass bowls face an open hanok courtyard.",
-  "The Andong room contains neither a harbor view nor a metal exhaust hood.",
+  "QUIZ 01 · The object closest to the viewer is the incense burner.",
+  "QUIZ 02 · The red apples are arranged on the front-right side of the table.",
+  "QUIZ 03 · The jujubes are arranged on the front-left side of the table.",
+  "QUIZ 04 · A grilled fish is placed near the center-back of the table.",
+  "QUIZ 05 · The memorial table is set in a modern restaurant dining room.",
 ];
 
 const hints = [
-  "Count the vermilion memory seals in every restaurant scene.",
-  "Compare the wall material in the Busan and Chuncheon rooms.",
-  "One room borrows another region's signature and bears a fourth seal.",
+  "Look at the lowest edge of the image: the brass vessel with smoke is the closest object.",
+  "In the foreground, the red apples sit to the viewer's right and the dark red jujubes sit to the left.",
+  "The room has a folding screen and a memorial tablet, not restaurant seating or a menu.",
 ];
+
+// Every authentic room bears exactly three memory seals.
 
 function formatTime(value: number) { const minutes = Math.floor(value / 60); const seconds = value % 60; return `${minutes}:${seconds.toString().padStart(2, "0")}`; }
 
