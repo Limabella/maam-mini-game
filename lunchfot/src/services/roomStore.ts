@@ -22,6 +22,7 @@ import {
   selectFinalists,
   VOTE_LIMIT,
 } from "../game/sushiRace";
+import { TOP_SPIN_CUT_IN_MS, TOP_SPIN_PLAY_MS } from "../game/topSpin";
 import type { GameId, MenuVoteEntry, ResultEntry, RoomState } from "../types";
 
 export type Unsubscribe = () => void;
@@ -151,17 +152,18 @@ const createRaceStartPatch = (room: RoomState) => {
   const seed = randomSeed();
   const roomWithSeed = normalizeRoom({ ...room, seed });
   const finalists = selectFinalists(roomWithSeed);
-  const raceDurationMs = createRaceDuration(seed);
+  const isTopSpin = room.gameId === "top-spin";
+  const raceDurationMs = isTopSpin ? TOP_SPIN_PLAY_MS : createRaceDuration(seed);
   const currentPlayerCount = Object.keys(room.players).length;
 
   return {
     status: "countdown" as const,
     seed,
-    startAt: Date.now() + RACE_COUNTDOWN_MS,
+    startAt: Date.now() + (isTopSpin ? TOP_SPIN_CUT_IN_MS : RACE_COUNTDOWN_MS),
     raceStartedAt: null,
     raceDurationMs,
     finalists,
-    raceEvents: createRaceEvents(finalists, seed, raceDurationMs, currentPlayerCount),
+    raceEvents: isTopSpin ? [] : createRaceEvents(finalists, seed, raceDurationMs, currentPlayerCount),
     spinStartAt: null,
     spinBoosts: {},
     throws: {},
@@ -339,7 +341,7 @@ const firebaseSetPlaying = async (database: Database, roomCode: string) => {
 
   await update(roomRef, {
     status: "playing",
-    raceStartedAt: Date.now() + RACE_VISUAL_START_DELAY_MS,
+    raceStartedAt: Date.now() + (room.gameId === "top-spin" ? 0 : RACE_VISUAL_START_DELAY_MS),
   });
 };
 
@@ -471,7 +473,7 @@ const createLocalStore = (): RoomStore => {
       writeLocalRoom(roomCode, {
         ...room,
         status: "playing",
-        raceStartedAt: Date.now() + RACE_VISUAL_START_DELAY_MS,
+        raceStartedAt: Date.now() + (room.gameId === "top-spin" ? 0 : RACE_VISUAL_START_DELAY_MS),
       });
     },
     finishGame: async (roomCode, result) => {

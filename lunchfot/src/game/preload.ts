@@ -22,6 +22,10 @@ export const preloadUiImages = () => {
     "/other/10dish_item_hit_01.png",
     "/other/10dish_item_hit_02.png",
     "/other/10dish_item_hit_03.png",
+    "/top-spin/bibimbap-top-spin-cut-01.webp",
+    "/top-spin/bibimbap-top-spin-cut-02.webp",
+    "/top-spin/bibimbap-top-spin-cut-03.webp",
+    "/top-spin/bibimbap-top-spin-cut-04.webp",
     ...menuCards.map(getFoodImageUrl),
   ]);
 

@@ -13,6 +13,7 @@ import { menuById, menuCards } from "./data/menuCards";
 import { getMenuDisplayName, getRacerForMenu } from "./data/sushiRacers";
 import { createInitialSoundEnabled, useArcadeAudio, type ArcadeAudio } from "./game/audio";
 import { preloadUiImages } from "./game/preload";
+import { calculateTopSpinResult, TOP_SPIN_PLAY_MS } from "./game/topSpin";
 import {
   applyRaceRenderPriority,
   loadLoadingBotModel,
@@ -57,6 +58,7 @@ import {
 } from "./game/sushiRace";
 import { useNow } from "./hooks/useNow";
 import { getFoodImageUrl, getResultCardImageUrl, getRunnerImageUrl } from "./lib/menuAssets";
+import { ThreeTopSpinGame, TopSpinCutIn } from "./TopSpinGame";
 import {
   createRoomStore,
   getRememberedNickname,
@@ -442,7 +444,87 @@ type GameRoomProps = {
   store: RoomStore;
 };
 
-function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRoomProps) {
+function GameRoom(props: GameRoomProps) {
+  return props.room.gameId === "top-spin" ? <TopSpinRoom {...props} /> : <SushiGameRoom {...props} />;
+}
+
+function TopSpinRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRoomProps) {
+  const now = useNow(room.status === "lobby" || room.status === "countdown" || room.status === "playing");
+  const previousStatusRef = useRef(room.status);
+  const finishingRef = useRef(false);
+  const isHost = room.hostUid === currentUid;
+
+  useEffect(() => {
+    if (!isHost || room.status !== "countdown" || !room.startAt || now < room.startAt) {
+      return;
+    }
+
+    store.setPlaying(roomCode).catch(console.error);
+  }, [isHost, now, room.startAt, room.status, roomCode, store]);
+
+  useEffect(() => {
+    if (room.status !== "playing") {
+      finishingRef.current = false;
+      return;
+    }
+
+    if (!isHost || finishingRef.current || !room.raceStartedAt || now < room.raceStartedAt + TOP_SPIN_PLAY_MS) {
+      return;
+    }
+
+    finishingRef.current = true;
+    store.finishGame(roomCode, calculateTopSpinResult(room)).catch((error) => {
+      finishingRef.current = false;
+      console.error(error);
+    });
+  }, [isHost, now, room, room.raceStartedAt, room.status, roomCode, store]);
+
+  useEffect(() => {
+    if (room.status === "playing" && previousStatusRef.current !== "playing") {
+      audio.playSpin(1.45);
+    }
+    previousStatusRef.current = room.status;
+  }, [audio, room.status]);
+
+  const handleStart = () => {
+    audio.arm();
+    audio.playGrab();
+    store.startGame(roomCode).catch(console.error);
+  };
+
+  if (room.status === "countdown") {
+    return <TopSpinCutIn now={now} room={room} />;
+  }
+
+  if (room.status === "playing") {
+    return <ThreeTopSpinGame room={room} />;
+  }
+
+  if (room.status === "result" && room.result) {
+    return <TopSpinResultView room={room} />;
+  }
+
+  return (
+    <section className="stage lobby-stage">
+      <div className="lobby-info-row">
+        <RoomSummary room={room} roomCode={roomCode} />
+        <VoteNotice room={room} now={now} />
+        <PlayerList room={room} />
+      </div>
+      <VoteBoard
+        currentUid={currentUid}
+        isHost={isHost}
+        nickname={nickname}
+        room={room}
+        roomCode={roomCode}
+        store={store}
+        onStart={handleStart}
+      />
+    </section>
+  );
+}
+
+function SushiGameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRoomProps) {
   const now = useNow(room.status === "lobby" || room.status === "countdown" || room.status === "playing");
   const prevStatusRef = useRef(room.status);
   const prevRaceVisibleRef = useRef(false);
@@ -548,10 +630,6 @@ function GameRoom({ audio, currentUid, nickname, room, roomCode, store }: GameRo
   }, [currentRaceVisualKey, now, raceModelsReady, raceVisualKey, room.raceStartedAt, room.status]);
 
   const handleStart = () => {
-    if (room.gameId === "top-spin") {
-      return;
-    }
-
     audio.arm();
     audio.playGrab();
     store.startGame(roomCode).catch(console.error);
@@ -904,16 +982,16 @@ function VoteBoard({ currentUid, isHost, nickname, room, roomCode, store, onStar
         {isHost ? (
           <button
             className="primary-button start-button"
-            disabled={!hasAnyVote || room.gameId === "top-spin"}
+            disabled={!hasAnyVote}
             type="button"
             onClick={onStart}
           >
-            {room.gameId === "top-spin" ? "Loading scene is next" : "Start top 6 race"}
+            {room.gameId === "top-spin" ? "Start Top Spin" : "Start top 6 race"}
           </button>
         ) : (
           <p className="waiting-text">
             {room.gameId === "top-spin"
-              ? "Food selection is ready. The Top Spin loading scene comes next."
+              ? "The top spins when the host launches the six finalists."
               : "The race starts when the host launches the top 6 finalists."}
           </p>
         )}
@@ -2159,6 +2237,21 @@ function PixiSushiRaceTrack({ room, now }: SushiRaceTrackProps) {
 type ResultViewProps = {
   room: RoomState;
 };
+
+function TopSpinResultView({ room }: ResultViewProps) {
+  const result = room.result;
+  const winnerMenu = menuById.get(result?.menuId ?? "") ?? menuCards[0];
+
+  return (
+    <section className="stage result-stage" aria-label={`${getMenuDisplayName(winnerMenu)} selected`}>
+      <section className="result-popup top-spin-result-popup">
+        <article className="result-popup__image">
+          <MenuImage menu={winnerMenu} variant="winner" />
+        </article>
+      </section>
+    </section>
+  );
+}
 
 function ResultView({ room }: ResultViewProps) {
   const result = room.result;
