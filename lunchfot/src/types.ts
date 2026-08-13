@@ -76,6 +76,13 @@ export type SpinBoostEntry = {
   durationMs: number;
 };
 
+export type TopSpinWhipEntry = {
+  sequence: number;
+  whipAt: number;
+  success: boolean;
+  accuracy: number;
+};
+
 export type ResultRankEntry = {
   uid: string;
   nickname: string;
@@ -116,6 +123,10 @@ export type RoomState = {
   raceEvents?: RaceEvent[];
   raceStartedAt?: number | null;
   raceDurationMs?: number;
+  topSpinEndsAt?: number | null;
+  topSpinLastWhip?: TopSpinWhipEntry | null;
+  topSpinLapCount?: number;
+  topSpinScore?: number;
   dartAims?: Record<string, DartAimEntry>;
   throws?: Record<string, ThrowEntry>;
   result?: ResultEntry | null;

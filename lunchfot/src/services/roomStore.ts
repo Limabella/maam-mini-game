@@ -22,7 +22,14 @@ import {
   selectFinalists,
   VOTE_LIMIT,
 } from "../game/sushiRace";
-import { TOP_SPIN_CUT_IN_MS, TOP_SPIN_PLAY_MS } from "../game/topSpin";
+import {
+  TOP_SPIN_CUT_IN_MS,
+  TOP_SPIN_INITIAL_MS,
+  TOP_SPIN_MISS_PENALTY_MS,
+  TOP_SPIN_MISS_SCORE,
+  TOP_SPIN_SUCCESS_BONUS_MS,
+  TOP_SPIN_SUCCESS_SCORE,
+} from "../game/topSpin";
 import type { GameId, MenuVoteEntry, ResultEntry, RoomState } from "../types";
 
 export type Unsubscribe = () => void;
@@ -36,6 +43,7 @@ export type RoomStore = {
   submitVote: (roomCode: string, nickname: string, menuIds: string[]) => Promise<void>;
   startGame: (roomCode: string) => Promise<void>;
   setPlaying: (roomCode: string) => Promise<void>;
+  whipTopSpin: (roomCode: string, success: boolean, accuracy: number) => Promise<void>;
   finishGame: (roomCode: string, result: ResultEntry) => Promise<void>;
   resetRoom: (roomCode: string) => Promise<void>;
 };
@@ -112,6 +120,10 @@ const normalizeRoom = (room: RoomState): RoomState => {
     raceEvents: room.raceEvents ?? [],
     raceStartedAt: room.raceStartedAt ?? null,
     raceDurationMs: room.raceDurationMs ?? createRaceDuration(room.seed),
+    topSpinEndsAt: room.topSpinEndsAt ?? null,
+    topSpinLastWhip: room.topSpinLastWhip ?? null,
+    topSpinLapCount: room.topSpinLapCount ?? 0,
+    topSpinScore: room.topSpinScore ?? 0,
     result: room.result ?? null,
   };
 };
@@ -142,6 +154,10 @@ const createInitialRoom = (hostUid: string, nickname: string, gameId: GameId): R
     raceEvents: [],
     raceStartedAt: null,
     raceDurationMs: createRaceDuration(seed),
+    topSpinEndsAt: null,
+    topSpinLastWhip: null,
+    topSpinLapCount: 0,
+    topSpinScore: 0,
     throws: {},
     dartAims: {},
     result: null,
@@ -153,7 +169,7 @@ const createRaceStartPatch = (room: RoomState) => {
   const roomWithSeed = normalizeRoom({ ...room, seed });
   const finalists = selectFinalists(roomWithSeed);
   const isTopSpin = room.gameId === "top-spin";
-  const raceDurationMs = isTopSpin ? TOP_SPIN_PLAY_MS : createRaceDuration(seed);
+  const raceDurationMs = isTopSpin ? TOP_SPIN_INITIAL_MS : createRaceDuration(seed);
   const currentPlayerCount = Object.keys(room.players).length;
 
   return {
@@ -169,6 +185,10 @@ const createRaceStartPatch = (room: RoomState) => {
     throws: {},
     dartAims: {},
     result: null,
+    topSpinEndsAt: null,
+    topSpinLastWhip: null,
+    topSpinLapCount: 0,
+    topSpinScore: 0,
   };
 };
 
@@ -248,6 +268,7 @@ const createFirebaseStore = async (): Promise<RoomStore> => {
     submitVote: (roomCode, nickname, menuIds) => firebaseSubmitVote(database, user.uid, roomCode, nickname, menuIds),
     startGame: (roomCode) => firebaseStartGame(database, user.uid, roomCode),
     setPlaying: (roomCode) => firebaseSetPlaying(database, roomCode),
+    whipTopSpin: (roomCode, success, accuracy) => firebaseWhipTopSpin(database, user.uid, roomCode, success, accuracy),
     finishGame: (roomCode, result) => firebaseFinishGame(database, roomCode, result),
     resetRoom: (roomCode) => firebaseResetRoom(database, user.uid, roomCode),
   };
@@ -339,9 +360,29 @@ const firebaseSetPlaying = async (database: Database, roomCode: string) => {
     return;
   }
 
+  const startedAt = Date.now() + (room.gameId === "top-spin" ? 0 : RACE_VISUAL_START_DELAY_MS);
   await update(roomRef, {
     status: "playing",
-    raceStartedAt: Date.now() + (room.gameId === "top-spin" ? 0 : RACE_VISUAL_START_DELAY_MS),
+    raceStartedAt: startedAt,
+    topSpinEndsAt: room.gameId === "top-spin" ? startedAt + TOP_SPIN_INITIAL_MS : null,
+  });
+};
+
+const firebaseWhipTopSpin = async (database: Database, uid: string, roomCode: string, success: boolean, accuracy: number) => {
+  const roomRef = ref(database, `rooms/${roomCode}`);
+  const snapshot = await get(roomRef);
+  if (!snapshot.exists()) return;
+  const room = normalizeRoom(snapshot.val() as RoomState);
+  if (room.hostUid !== uid || room.status !== "playing" || room.gameId !== "top-spin") return;
+  const now = Date.now();
+  const sequence = (room.topSpinLastWhip?.sequence ?? 0) + 1;
+  await update(roomRef, {
+    topSpinEndsAt: success
+      ? Math.max(room.topSpinEndsAt ?? now, now) + TOP_SPIN_SUCCESS_BONUS_MS
+      : Math.max(now + 600, (room.topSpinEndsAt ?? now) - TOP_SPIN_MISS_PENALTY_MS),
+    topSpinLastWhip: { sequence, whipAt: now, success, accuracy },
+    topSpinLapCount: (room.topSpinLapCount ?? 0) + (success ? 1 : 0),
+    topSpinScore: (room.topSpinScore ?? 0) + (success ? TOP_SPIN_SUCCESS_SCORE : -TOP_SPIN_MISS_SCORE),
   });
 };
 
@@ -376,6 +417,10 @@ const firebaseResetRoom = async (database: Database, uid: string, roomCode: stri
     dartAims: {},
     spinStartAt: null,
     spinBoosts: {},
+    topSpinEndsAt: null,
+    topSpinLastWhip: null,
+    topSpinLapCount: 0,
+    topSpinScore: 0,
   });
 };
 
@@ -470,10 +515,26 @@ const createLocalStore = (): RoomStore => {
         return;
       }
 
+      const startedAt = Date.now() + (room.gameId === "top-spin" ? 0 : RACE_VISUAL_START_DELAY_MS);
       writeLocalRoom(roomCode, {
         ...room,
         status: "playing",
-        raceStartedAt: Date.now() + (room.gameId === "top-spin" ? 0 : RACE_VISUAL_START_DELAY_MS),
+        raceStartedAt: startedAt,
+        topSpinEndsAt: room.gameId === "top-spin" ? startedAt + TOP_SPIN_INITIAL_MS : null,
+      });
+    },
+    whipTopSpin: async (roomCode, success, accuracy) => {
+      const room = readLocalRoom(roomCode);
+      if (!room || room.hostUid !== uid || room.status !== "playing" || room.gameId !== "top-spin") return;
+      const now = Date.now();
+      writeLocalRoom(roomCode, {
+        ...room,
+        topSpinEndsAt: success
+          ? Math.max(room.topSpinEndsAt ?? now, now) + TOP_SPIN_SUCCESS_BONUS_MS
+          : Math.max(now + 600, (room.topSpinEndsAt ?? now) - TOP_SPIN_MISS_PENALTY_MS),
+        topSpinLastWhip: { sequence: (room.topSpinLastWhip?.sequence ?? 0) + 1, whipAt: now, success, accuracy },
+        topSpinLapCount: (room.topSpinLapCount ?? 0) + (success ? 1 : 0),
+        topSpinScore: (room.topSpinScore ?? 0) + (success ? TOP_SPIN_SUCCESS_SCORE : -TOP_SPIN_MISS_SCORE),
       });
     },
     finishGame: async (roomCode, result) => {
@@ -506,6 +567,10 @@ const createLocalStore = (): RoomStore => {
         dartAims: {},
         spinStartAt: null,
         spinBoosts: {},
+        topSpinEndsAt: null,
+        topSpinLastWhip: null,
+        topSpinLapCount: 0,
+        topSpinScore: 0,
       });
     },
   };

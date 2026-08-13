@@ -2,7 +2,18 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { menuById } from "./data/menuCards";
 import { getMenuDisplayName, getRacerForMenu } from "./data/sushiRacers";
-import { getTopSpinFinalists, getTopSpinWinnerIndex, TOP_SPIN_CUT_IN_MS, TOP_SPIN_PLAY_MS } from "./game/topSpin";
+import {
+  getTopSpinFinalists,
+  getTopSpinWinnerIndex,
+  TOP_SPIN_CUT_IN_MS,
+  TOP_SPIN_FALL_MS,
+  TOP_SPIN_GAUGE_SWEEP_MS,
+  TOP_SPIN_INITIAL_MS,
+  TOP_SPIN_MAGPIE_MS,
+  TOP_SPIN_MISS_SCORE,
+  TOP_SPIN_SUCCESS_SCORE,
+  TOP_SPIN_SUCCESS_ZONE_WIDTH,
+} from "./game/topSpin";
 import { getFoodImageUrl } from "./lib/menuAssets";
 import type { RoomState } from "./types";
 
@@ -134,12 +145,30 @@ const makeTopTexture = (room: RoomState) => {
   return texture;
 };
 
-export function ThreeTopSpinGame({ room }: { room: RoomState }) {
+type ThreeTopSpinGameProps = {
+  room: RoomState;
+  isHost: boolean;
+  onWhip: (success: boolean, accuracy: number) => Promise<void>;
+};
+
+const getGaugeCenter = (seed: number, sequence: number) => {
+  const raw = Math.sin((seed + sequence * 7_919) * 12.9898) * 43_758.5453;
+  return 0.18 + (raw - Math.floor(raw)) * 0.64;
+};
+
+export function ThreeTopSpinGame({ room, isHost, onWhip }: ThreeTopSpinGameProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const roomRef = useRef(room);
+  roomRef.current = room;
   const finalists = useMemo(() => getTopSpinFinalists(room), [room]);
   const winnerIndex = useMemo(() => getTopSpinWinnerIndex(room), [room]);
+  const finalistKey = finalists.join("|");
   const [winnerRevealed, setWinnerRevealed] = useState(false);
   const [spinPhase, setSpinPhase] = useState<"launch" | "spin" | "wobble">("launch");
+  const [uiNow, setUiNow] = useState(Date.now());
+  const [submitting, setSubmitting] = useState(false);
+  const [magpieFlying, setMagpieFlying] = useState(false);
+  const magpieSeenRef = useRef(false);
 
   useEffect(() => {
     setWinnerRevealed(false);
@@ -147,16 +176,21 @@ export function ThreeTopSpinGame({ room }: { room: RoomState }) {
       return;
     }
 
-    const timer = window.setTimeout(
-      () => setWinnerRevealed(true),
-      Math.max(0, room.raceStartedAt + TOP_SPIN_PLAY_MS * 0.82 - Date.now()),
-    );
     const phaseTimer = window.setInterval(() => {
-      const progress = clamp01((Date.now() - (room.raceStartedAt ?? Date.now())) / TOP_SPIN_PLAY_MS);
-      setSpinPhase(progress < 0.22 ? "launch" : progress < 0.66 ? "spin" : "wobble");
-    }, 120);
+      const current = Date.now();
+      setUiNow(current);
+      const endsAt = roomRef.current.topSpinEndsAt ?? (roomRef.current.raceStartedAt ?? current) + TOP_SPIN_INITIAL_MS;
+      const elapsed = current - (roomRef.current.raceStartedAt ?? current);
+      const falling = current >= endsAt;
+      setSpinPhase(falling ? "wobble" : elapsed < 1_300 ? "launch" : "spin");
+      setWinnerRevealed(current >= endsAt + TOP_SPIN_FALL_MS * 0.55);
+      if (elapsed >= TOP_SPIN_MAGPIE_MS && !magpieSeenRef.current) {
+        magpieSeenRef.current = true;
+        setMagpieFlying(true);
+        window.setTimeout(() => setMagpieFlying(false), 6_500);
+      }
+    }, 32);
     return () => {
-      window.clearTimeout(timer);
       window.clearInterval(phaseTimer);
     };
   }, [room.raceStartedAt]);
@@ -290,6 +324,8 @@ export function ThreeTopSpinGame({ room }: { room: RoomState }) {
 
     let cancelled = false;
     let frameId = 0;
+    let spinAngle = 0;
+    let previousFrameAt = performance.now();
     const targetAngle = -winnerIndex * slice - slice / 2;
 
     const resize = () => {
@@ -303,25 +339,36 @@ export function ThreeTopSpinGame({ room }: { room: RoomState }) {
       if (cancelled) {
         return;
       }
-      const elapsed = Math.max(0, Date.now() - (room.raceStartedAt ?? Date.now()));
-      const progress = clamp01(elapsed / TOP_SPIN_PLAY_MS);
-      const spinProgress = easeOutCubic(clamp01(progress / 0.82));
-      const settle = easeInOutCubic(clamp01((progress - 0.62) / 0.2));
-      const fall = easeInOutCubic(clamp01((progress - 0.82) / 0.18));
-      const wobble = progress > 0.58 && progress < 0.9 ? Math.sin(elapsed / Math.max(38, 120 - settle * 70)) * (0.035 + settle * 0.075) : 0;
-      const turns = TAU * 15;
+      const current = Date.now();
+      const currentRoom = roomRef.current;
+      const elapsed = Math.max(0, current - (currentRoom.raceStartedAt ?? current));
+      const endsAt = currentRoom.topSpinEndsAt ?? (currentRoom.raceStartedAt ?? current) + TOP_SPIN_INITIAL_MS;
+      const remaining = endsAt - current;
+      const fall = easeInOutCubic(clamp01(-remaining / TOP_SPIN_FALL_MS));
+      const settle = fall;
+      const whipAge = current - (currentRoom.topSpinLastWhip?.whipAt ?? 0);
+      const whipKick = currentRoom.topSpinLastWhip?.success && whipAge >= 0 && whipAge < 1_200 ? (1 - whipAge / 1_200) * 0.018 : 0;
+      const missSlow = currentRoom.topSpinLastWhip && !currentRoom.topSpinLastWhip.success && whipAge >= 0 && whipAge < 1_400
+        ? 0.42 + (whipAge / 1_400) * 0.58
+        : 1;
+      const frameAt = performance.now();
+      const delta = Math.min(40, frameAt - previousFrameAt);
+      previousFrameAt = frameAt;
+      spinAngle += delta * Math.max(0.001, (0.013 * (1 - fall) + whipKick) * missSlow);
+      const wobbleStrength = remaining < 2_500 ? clamp01((2_500 - Math.max(0, remaining)) / 2_500) : 0;
+      const wobble = Math.sin(elapsed / Math.max(38, 92 - wobbleStrength * 42)) * (0.018 + wobbleStrength * 0.09) * (1 - fall);
 
       topRoot.rotation.order = "YXZ";
-      topRoot.rotation.y = turns * spinProgress + targetAngle * settle;
+      topRoot.rotation.y = spinAngle + targetAngle * settle;
       const fallDirection = winnerIndex * slice;
       topRoot.rotation.x = wobble + Math.sin(fallDirection) * fall * 0.78;
       topRoot.rotation.z = wobble * 0.72 + Math.cos(fallDirection) * fall * 0.78;
-      const launch = easeOutCubic(clamp01(progress / 0.22));
+      const launch = easeOutCubic(clamp01(elapsed / 1_300));
       const travelRadius = (1 - launch) * 1.15;
       topRoot.position.x = Math.cos(elapsed / 185) * travelRadius;
       topRoot.position.z = Math.sin(elapsed / 185) * travelRadius * 0.72;
-      topRoot.position.y = 0.16 + Math.sin(Math.min(1, progress / 0.12) * Math.PI) * 0.22 - fall * 0.12;
-      topRoot.scale.setScalar(0.72 + easeOutCubic(clamp01(progress / 0.48)) * 0.38);
+      topRoot.position.y = 0.16 + Math.sin(Math.min(1, elapsed / 760) * Math.PI) * 0.22 - fall * 0.12;
+      topRoot.scale.setScalar(0.72 + easeOutCubic(clamp01(elapsed / 3_800)) * 0.38);
       halo.rotation.z = -elapsed / 210;
       halo.scale.setScalar(1 + Math.sin(elapsed / 90) * 0.035);
       (halo.material as THREE.MeshBasicMaterial).opacity = 0.68 * (1 - fall * 0.7);
@@ -329,13 +376,13 @@ export function ThreeTopSpinGame({ room }: { room: RoomState }) {
       orbitRings.forEach((ring, index) => {
         const material = ring.material as THREE.MeshBasicMaterial;
         const pulse = 0.8 + Math.sin(elapsed / (150 + index * 45) - index) * 0.2;
-        ring.scale.setScalar(0.78 + progress * 0.3 + index * 0.035 + pulse * 0.035);
+        ring.scale.setScalar(0.9 + index * 0.035 + pulse * 0.035 + whipKick * 3);
         material.opacity = (0.32 - index * 0.06) * (1 - fall * 0.75) * pulse;
       });
       dust.rotation.y = elapsed / 1050;
       dustMaterial.opacity = (0.28 + Math.sin(elapsed / 120) * 0.12) * (1 - fall * 0.65);
 
-      const cameraArrival = easeInOutCubic(clamp01(progress / 0.72));
+      const cameraArrival = easeInOutCubic(clamp01(elapsed / 5_500));
       camera.position.x = Math.sin(elapsed / 1450) * (0.55 - cameraArrival * 0.34);
       camera.position.y = 9.8 - cameraArrival * 2.35 + fall * 0.45;
       camera.position.z = 1.7 - cameraArrival * 1.45;
@@ -367,20 +414,69 @@ export function ThreeTopSpinGame({ room }: { room: RoomState }) {
         host.removeChild(renderer.domElement);
       }
     };
-  }, [finalists, room, winnerIndex]);
+  }, [finalistKey, room.raceStartedAt, winnerIndex]);
 
   const winner = menuById.get(finalists[winnerIndex] ?? "");
+  const endsAt = room.topSpinEndsAt ?? (room.raceStartedAt ?? uiNow) + TOP_SPIN_INITIAL_MS;
+  const isFalling = uiNow >= endsAt;
+  const sequence = room.topSpinLastWhip?.sequence ?? 0;
+  const attemptStartedAt = room.topSpinLastWhip?.whipAt ?? room.raceStartedAt ?? uiNow;
+  const sweep = Math.max(0, (uiNow - attemptStartedAt) / TOP_SPIN_GAUGE_SWEEP_MS) % 2;
+  const arrowPosition = sweep <= 1 ? sweep : 2 - sweep;
+  const successCenter = getGaugeCenter(room.seed, sequence + 1);
+  const lastWhipAge = uiNow - (room.topSpinLastWhip?.whipAt ?? 0);
+  const showWhip = lastWhipAge >= 0 && lastWhipAge < 700;
+  const elapsedSeconds = Math.max(0, Math.floor((uiNow - (room.raceStartedAt ?? uiNow)) / 1_000));
+
+  const strike = async () => {
+    if (!isHost || submitting || isFalling || uiNow - attemptStartedAt < 450) return;
+    const distance = Math.abs(arrowPosition - successCenter);
+    const success = distance <= TOP_SPIN_SUCCESS_ZONE_WIDTH / 2;
+    setSubmitting(true);
+    try {
+      await onWhip(success, Math.max(0, 1 - distance / 0.5));
+    } finally {
+      window.setTimeout(() => setSubmitting(false), 520);
+    }
+  };
+
+  useEffect(() => {
+    if (!isHost) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code !== "Space" || event.repeat) return;
+      event.preventDefault();
+      void strike();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
 
   return (
     <section className="top-spin-game" aria-label="Six menu spinning top roulette">
       <div className="top-spin-game__match-frame" aria-hidden="true" />
       <div className="top-spin-game__canvas" ref={hostRef} />
       <div className="top-spin-game__motion-ring" aria-hidden="true"><span /><span /><span /></div>
+      {showWhip && <div className={`top-spin-whip ${room.topSpinLastWhip?.success ? "is-success" : "is-miss"}`} aria-hidden="true" />}
+      {showWhip && (
+        <strong className={`top-spin-score-pop ${room.topSpinLastWhip?.success ? "is-plus" : "is-minus"}`} aria-live="polite">
+          {room.topSpinLastWhip?.success ? `+${TOP_SPIN_SUCCESS_SCORE}` : `-${TOP_SPIN_MISS_SCORE}`}
+        </strong>
+      )}
+      {magpieFlying && (
+        <div className="top-spin-magpie" role="img" aria-label="20초 동안 살아남은 팽이 위로 까치가 날아갑니다">
+          <span className="top-spin-magpie__tail" /><span className="top-spin-magpie__body" /><span className="top-spin-magpie__wing" />
+        </div>
+      )}
       <p className={`top-spin-game__status is-${spinPhase}`}>
-        {spinPhase === "launch" ? "팽이가 힘차게 날아듭니다" : spinPhase === "spin" ? "오늘의 한 끼를 찾는 중" : "어느 쪽으로 기울까요?"}
+        {spinPhase === "launch" ? "팽이가 힘차게 날아듭니다" : spinPhase === "spin" ? `${elapsedSeconds}초째 · 이어치기 ${room.topSpinLapCount ?? 0}회 · ${room.topSpinScore ?? 0}점` : "힘이 다해 기울어집니다"}
       </p>
-      <div className="top-spin-game__hud">
-        <i aria-hidden="true">▼</i>
+      <div className={`top-spin-gauge${isFalling ? " is-disabled" : ""}${showWhip ? room.topSpinLastWhip?.success ? " is-success" : " is-miss" : ""}`}>
+        <div className="top-spin-gauge__heading"><strong>팽이치기 타이밍</strong><span>{isHost ? "SPACE 또는 버튼" : "호스트가 팽이를 이어칩니다"}</span></div>
+        <div className="top-spin-gauge__bar">
+          <span className="top-spin-gauge__target" style={{ left: `${(successCenter - TOP_SPIN_SUCCESS_ZONE_WIDTH / 2) * 100}%`, width: `${TOP_SPIN_SUCCESS_ZONE_WIDTH * 100}%` }} />
+          <i className="top-spin-gauge__arrow" style={{ left: `${arrowPosition * 100}%` }} aria-hidden="true">▼</i>
+        </div>
+        {isHost && <button type="button" disabled={submitting || isFalling} onClick={() => void strike()}>이어치기!</button>}
       </div>
       <ul className="top-spin-game__finalists" aria-label="Top six menu finalists">
         {finalists.map((menuId, index) => (

@@ -4,7 +4,15 @@ import type { RaceResultRankEntry, ResultEntry, RoomState } from "../types";
 import { createSeededRandom, FINALIST_COUNT, selectFinalists } from "./sushiRace";
 
 export const TOP_SPIN_CUT_IN_MS = 6_000;
-export const TOP_SPIN_PLAY_MS = 9_000;
+export const TOP_SPIN_INITIAL_MS = 8_000;
+export const TOP_SPIN_SUCCESS_BONUS_MS = 4_500;
+export const TOP_SPIN_MISS_PENALTY_MS = 1_800;
+export const TOP_SPIN_SUCCESS_SCORE = 100;
+export const TOP_SPIN_MISS_SCORE = 50;
+export const TOP_SPIN_FALL_MS = 1_800;
+export const TOP_SPIN_GAUGE_SWEEP_MS = 1_250;
+export const TOP_SPIN_SUCCESS_ZONE_WIDTH = 0.055;
+export const TOP_SPIN_MAGPIE_MS = 20_000;
 
 export const getTopSpinFinalists = (room: RoomState) =>
   (room.finalists?.length ? room.finalists : selectFinalists(room)).slice(0, FINALIST_COUNT);
@@ -15,7 +23,7 @@ export const getTopSpinWinnerIndex = (room: RoomState) => {
   return Math.min(finalists.length - 1, Math.floor(random() * Math.max(1, finalists.length)));
 };
 
-export const calculateTopSpinResult = (room: RoomState): ResultEntry => {
+export const calculateTopSpinResult = (room: RoomState, finishedAt = Date.now()): ResultEntry => {
   const finalists = getTopSpinFinalists(room);
   const winnerIndex = getTopSpinWinnerIndex(room);
   const orderedIds = finalists.map((_, offset) => finalists[(winnerIndex + offset) % finalists.length]);
@@ -29,7 +37,7 @@ export const calculateTopSpinResult = (room: RoomState): ResultEntry => {
       menuName: getMenuDisplayName(menu),
       characterId: racer.characterId,
       characterName: racer.characterName,
-      finishMs: TOP_SPIN_PLAY_MS + index * 250,
+      finishMs: Math.max(TOP_SPIN_INITIAL_MS, finishedAt - (room.raceStartedAt ?? finishedAt)) + index * 250,
       penaltyMs: 0,
     };
   });
@@ -44,7 +52,7 @@ export const calculateTopSpinResult = (room: RoomState): ResultEntry => {
     rankings: [],
     characterId: winner.characterId,
     characterName: winner.characterName,
-    finishMs: TOP_SPIN_PLAY_MS,
+    finishMs: Math.max(TOP_SPIN_INITIAL_MS, finishedAt - (room.raceStartedAt ?? finishedAt)),
     raceRankings,
   };
 };

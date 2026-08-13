@@ -13,7 +13,7 @@ import { menuById, menuCards } from "./data/menuCards";
 import { getMenuDisplayName, getRacerForMenu } from "./data/sushiRacers";
 import { createInitialSoundEnabled, useArcadeAudio, type ArcadeAudio } from "./game/audio";
 import { preloadUiImages } from "./game/preload";
-import { calculateTopSpinResult, TOP_SPIN_PLAY_MS } from "./game/topSpin";
+import { calculateTopSpinResult, TOP_SPIN_FALL_MS, TOP_SPIN_INITIAL_MS } from "./game/topSpin";
 import {
   applyRaceRenderPriority,
   loadLoadingBotModel,
@@ -468,12 +468,13 @@ function TopSpinRoom({ audio, currentUid, nickname, room, roomCode, store }: Gam
       return;
     }
 
-    if (!isHost || finishingRef.current || !room.raceStartedAt || now < room.raceStartedAt + TOP_SPIN_PLAY_MS) {
+    const endsAt = room.topSpinEndsAt ?? (room.raceStartedAt ? room.raceStartedAt + TOP_SPIN_INITIAL_MS : null);
+    if (!isHost || finishingRef.current || !room.raceStartedAt || !endsAt || now < endsAt + TOP_SPIN_FALL_MS) {
       return;
     }
 
     finishingRef.current = true;
-    store.finishGame(roomCode, calculateTopSpinResult(room)).catch((error) => {
+    store.finishGame(roomCode, calculateTopSpinResult(room, now)).catch((error) => {
       finishingRef.current = false;
       console.error(error);
     });
@@ -497,7 +498,17 @@ function TopSpinRoom({ audio, currentUid, nickname, room, roomCode, store }: Gam
   }
 
   if (room.status === "playing") {
-    return <ThreeTopSpinGame room={room} />;
+    return (
+      <ThreeTopSpinGame
+        isHost={isHost}
+        room={room}
+        onWhip={(success, accuracy) => {
+          audio.playGrab();
+          if (success) audio.playSpin(1.2);
+          return store.whipTopSpin(roomCode, success, accuracy);
+        }}
+      />
+    );
   }
 
   if (room.status === "result" && room.result) {
